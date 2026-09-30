@@ -1,0 +1,28 @@
+{
+  "campaign": "campaign-name",
+  "objective": "Single outcome this creative should support",
+  "audience": "Primary audience",
+  "channel": "social",
+  "aspect": "1:1",
+  "locale": "en",
+  "headline": "Exact approved headline",
+  "body": "Optional approved supporting copy",
+  "cta": "Exact approved CTA",
+  "mandatoryElements": [],
+  "brand": {
+    "theme": "default",
+    "logo": "path/to/approved-logo.svg",
+    "fonts": [],
+    "palette": []
+  },
+  "media": [],
+  "constraints": {
+    "width": 1080,
+    "height": 1080,
+    "durationSeconds": null,
+    "maxBytes": null,
+    "format": "png"
+  },
+  "rightsNotes": [],
+  "variants": []
+}

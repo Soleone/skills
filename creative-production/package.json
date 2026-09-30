@@ -1,0 +1,22 @@
+{
+  "name": "creative-production-skill",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A portable Agent Skill for producing polished marketing visuals and media.",
+  "license": "MIT",
+  "keywords": [
+    "agent-skills",
+    "pi-package",
+    "creative-production",
+    "remotion",
+    "marketing-design"
+  ],
+  "pi": {
+    "skills": [
+      "./SKILL.md"
+    ]
+  },
+  "scripts": {
+    "validate": "bash scripts/preflight.sh all"
+  }
+}
