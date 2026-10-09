@@ -44,11 +44,9 @@ What gets reviewed:
 
 `SKILL_DIR` is this skill's directory (in Claude Code: `${CLAUDE_SKILL_DIR}`). Use absolute paths.
 
-### 1. Write the intent evidence
+### 1. Gather the intent evidence
 
-The reviewer judges necessity against what the user actually asked for. Spend a few steps on this, not an investigation.
-
-Create a temporary directory outside the repository (`mktemp -d`) and write `intent.json` there:
+The reviewer judges necessity against what the user actually asked for. Spend a few steps on this, not an investigation. The evidence is a small JSON document:
 
 ```json
 {
@@ -60,19 +58,23 @@ Create a temporary directory outside the repository (`mktemp -d`) and write `int
 ```
 
 - Copy the user's requests, constraints and non-goals that concern this increment **verbatim** from this conversation, oldest first.
-- `/prune` and the instructions it expands to are not a request about the code. Its focus text can be.
+- Leave out the message that started this review: `/prune`, `/skill:prune` and any text they expand to. Only their focus text can be a request.
 - A short assent ("yes", "do it", "option 2") needs what it answered: add `"referencedProposal": { "text": "..." }` holding only the final assistant proposal it accepted. No reasoning, no tool narration.
 - A compaction summary, handoff or recap is not the user's words. Include it only with a `source` that says what it is.
 - Missing intent is normal. Say what is missing in `gaps`, one sentence each, and move on. Don't search transcript archives, other sessions or task databases unless the user points you there. Never invent quotes, IDs or timestamps.
-- Plans, task notes or tool outputs that explain the step go in an optional `workflow.json`; see [evidence](references/evidence.md). Skip it when there are none. A `.pi/prune-intent.md` anchor at the repository root is picked up automatically.
+- Plans, task notes or tool outputs that explain the step go in an optional `workflow.json` file; see [evidence](references/evidence.md). Skip it when there are none. A `.pi/prune-intent.md` anchor at the repository root is picked up automatically.
 
 ### 2. Capture the increment
 
+Pipe the intent JSON straight into the capture script, so no temporary file is needed:
+
 ```sh
-node SKILL_DIR/scripts/capture.mjs --cwd <session cwd> --intent <tmp>/intent.json
+node SKILL_DIR/scripts/capture.mjs --cwd <repository> --intent - <<'JSON'
+{ "requests": [{ "source": "user message", "text": "The user's exact words" }], "gaps": [] }
+JSON
 ```
 
-`--cwd` is the repository to review, normally the session's working directory. Add `--workflow <tmp>/workflow.json`, `--reference <commit>` and `--focus "<focus text>"` when they apply. The script prints JSON with `root`, `scope`, `directory`, `taskPath` and `reportPath`. The packet in `directory` is a complete handoff: `task.txt` is the reviewer's task, and `contract.md` is its instructions. Capture never changes the repository. If it fails, report its error and stop; don't choose another scope.
+`--cwd` is the repository to review, normally the session's working directory. Add `--reference <commit>`, `--focus "<focus text>"` and `--workflow <file>` when they apply. The script prints JSON with `root`, `scope`, `directory`, `taskPath` and `reportPath`. The packet in `directory` is a complete handoff: `task.txt` is the reviewer's task, and `contract.md` is its instructions. Capture never changes the repository. If it fails, report its error and stop; don't choose another scope.
 
 ### 3. Run the review in a fresh subagent
 
@@ -111,4 +113,3 @@ Tell the user the scope and report path, then end your turn. Completion arrives 
 
 - [Review contract](references/review-contract.md): the reviewer's complete instructions. Capture copies it into every packet as `contract.md`.
 - [Evidence](references/evidence.md): `workflow.json`, capture scope and limits, privacy, the `.pi/prune-intent.md` anchor.
-- [Evaluation](eval/README.md): behavioral fixtures and a live runner for judging reviewer quality. Tests prove plumbing, not judgment.

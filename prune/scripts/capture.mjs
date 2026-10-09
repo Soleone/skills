@@ -1,27 +1,22 @@
 #!/usr/bin/env node
-import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { captureChange } from "./git.mjs";
 
-const USAGE = `Usage: node capture.mjs [--cwd PATH] [--intent JSON_PATH] [--workflow JSON_PATH] [--reference COMMIT] [--focus TEXT] [--output STORAGE_ROOT]
+const USAGE = `Usage: node capture.mjs [--cwd PATH] [--intent JSON_PATH|-] [--workflow JSON_PATH|-] [--reference COMMIT] [--focus TEXT] [--output STORAGE_ROOT]
        node capture.mjs --verify PACKET_DIRECTORY
 Captures Git evidence into a private review packet, or checks that the repository has not changed since a capture.
-No model calls, session scraping, tests or repository edits.`;
+A JSON path of - reads standard input. No model calls, session scraping, tests or repository edits.`;
 const CONTRACT = new URL("../references/review-contract.md", import.meta.url);
 const INTENT_NOTE = "Requests selected by the parent session from its available context; compacted or earlier messages may be missing. Select those relevant to the captured change. A referencedProposal only explains what a short reply accepted; it is not a requirement. Attachments are counted, not copied.";
 const WORKFLOW_NOTE = "Operational evidence supplied by the parent session, not authoritative intent. Capture does not inspect session history. No task backend, format or command names are assumed. Activity is historical and may be stale. Plan snapshots show a file's current text, not necessarily the accepted version. A project intent note's filename proves neither authorship nor approval.";
 const WORKING_NOTE = "All changes in this scope are included, not only agent-authored ones. The patch is a snapshot; repository reads see live files. Binary patches are not expanded and no tests were run.";
 const REFERENCE_NOTE = "The patch is the reference commit's first-parent diff, not today's working diff. Review its surviving implementation in the live current tree; later changes and removals are expected. head and status describe the current checkout. Binary patches are not expanded and no tests were run.";
 
-export function reviewStorageRoot() {
-  return join(process.env.DATA || join(homedir(), "data"), "apps", "pi-prune", "reviews");
-}
-
-export async function capturePacket({ cwd = process.cwd(), reference, focus = "", intent, workflow, contract, storageRoot = reviewStorageRoot() } = {}) {
+async function capturePacket({ cwd = process.cwd(), reference, focus = "", intent, workflow,
+  storageRoot = join(process.env.DATA || join(homedir(), "data"), "apps", "pi-prune", "reviews") }) {
   const { note: intentNote, ...evidence } = intent ?? { requests: [], gaps: ["No intent was supplied to capture."] };
   if (!Array.isArray(evidence.requests) || evidence.requests.some(request => typeof request?.text !== "string")) {
     throw new Error("Intent JSON must contain a requests array of { source, text } objects.");
@@ -58,7 +53,7 @@ export async function capturePacket({ cwd = process.cwd(), reference, focus = ""
   };
   await Promise.all([
     // A copy of the contract makes the packet a complete handoff for any reviewer and records which rules it used.
-    write("contract.md", contract ?? await readFile(CONTRACT, "utf8")),
+    write("contract.md", await readFile(CONTRACT, "utf8")),
     write("intent.json", JSON.stringify({ note: [INTENT_NOTE, intentNote].filter(Boolean).join(" "), ...evidence }, null, 2)),
     write("scope.json", JSON.stringify({
       ...scope,
@@ -75,7 +70,7 @@ export async function capturePacket({ cwd = process.cwd(), reference, focus = ""
 }
 
 // A reviewer that is read-only by instruction alone can still edit; this proves after the fact that it didn't.
-export async function verifyPacket(directory) {
+async function verifyPacket(directory) {
   const scope = JSON.parse(await readFile(join(directory, "scope.json"), "utf8"));
   const current = await captureChange(scope.root, scope.referenceCommit);
   const changes = [
@@ -116,6 +111,13 @@ function reviewTask(packet, latestCommitPath) {
   ].join("\n") + "\n";
 }
 
+async function readStdin() {
+  process.stdin.setEncoding("utf8");
+  let text = "";
+  for await (const chunk of process.stdin) text += chunk;
+  return text;
+}
+
 async function main() {
   const { values } = parseArgs({ options: {
     cwd: { type: "string" }, reference: { type: "string" }, focus: { type: "string" },
@@ -124,7 +126,7 @@ async function main() {
   } });
   if (values.help) { console.log(USAGE); return; }
   if (values.verify) { console.log(JSON.stringify(await verifyPacket(resolve(values.verify)), null, 2)); return; }
-  const json = async path => path && JSON.parse(await readFile(resolve(path), "utf8"));
+  const json = async path => path && JSON.parse(path === "-" ? await readStdin() : await readFile(resolve(path), "utf8"));
   const packet = await capturePacket({
     cwd: values.cwd, reference: values.reference, focus: values.focus,
     intent: await json(values.intent), workflow: await json(values.workflow), storageRoot: values.output,
@@ -132,7 +134,4 @@ async function main() {
   console.log(JSON.stringify(packet, null, 2));
 }
 
-// Skills are usually installed as symlinks, so compare real paths or the CLI silently does nothing.
-if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
-  main().catch(error => { console.error(`Prune capture failed: ${error.message}`); process.exitCode = 1; });
-}
+main().catch(error => { console.error(`Prune capture failed: ${error.message}`); process.exitCode = 1; });
