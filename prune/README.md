@@ -23,7 +23,7 @@ Prune is the counterweight, run while each increment is still small:
 /prune --reference abc123 challenge surviving fallbacks
 ```
 
-Implement one increment, run `/prune`, accept the proposals you want, apply and verify, continue. A dirty tree reviews all uncommitted changes; a clean tree reviews the latest commit. For older commits, review one `--reference` at a time, newest first. In pi, use `/skill:prune`, or link `prompts/prune.md` into your prompts directory for `/prune`.
+Implement one increment, run `/prune`, accept the proposals you want, apply and verify, continue. A dirty tree reviews all uncommitted changes; a clean tree reviews the latest commit. For older commits, review one `--reference` at a time, newest first. In pi, the same arguments go after `/skill:prune`.
 
 ## Install
 
