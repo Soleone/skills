@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -143,6 +143,15 @@ test("CLI prints the launch essentials and marks missing intent", async t => {
   assert.equal(packet.task, undefined);
   await assert.rejects(capturePacket({ cwd, intent: {}, storageRoot: join(directory, "bad") }), /requests array/);
   await assert.rejects(capturePacket({ cwd, intent: { requests: [{ source: "user message" }] }, storageRoot: join(directory, "bad") }), /requests array/);
+});
+
+test("the CLI runs when the skill is installed as a symlink", async t => {
+  const directory = await temporaryDirectory(t);
+  const linked = join(directory, "linked-skill");
+  await symlink(skillRoot, linked);
+  const { cwd } = await prepareReviewCase(REVIEW_CASES[0], join(directory, "fixture"));
+  const stdout = execFileSync(process.execPath, [join(linked, "scripts/capture.mjs"), "--cwd", cwd, "--output", join(directory, "captures")], { encoding: "utf8" });
+  assert.equal(JSON.parse(stdout).scope, "latest commit (first-parent comparison)");
 });
 
 test("all behavioral fixtures prepare complete packets without revealing gold rubrics", async t => {
