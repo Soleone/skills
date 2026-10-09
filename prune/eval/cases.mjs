@@ -1,3 +1,31 @@
+// Cases 08 and 09 share this increment; only the request decides whether JSON earns its place.
+const INVOICE_EXPORT = {
+    before: {
+        "invoices.ts": "export interface Invoice { id: string; customer: string; total: number }\n"
+    },
+    after: {
+        "invoices.ts": `export interface Invoice { id: string; customer: string; total: number }
+export type ExportFormat = "csv" | "json";
+function csvField(value: string): string {
+  return /[",\\n]/.test(value) ? '"' + value.replaceAll('"', '""') + '"' : value;
+}
+export function exportInvoices(invoices: readonly Invoice[], format: ExportFormat = "csv"): string {
+  if (format === "json") return JSON.stringify(invoices);
+  return invoices.map(invoice => [invoice.id, invoice.customer, String(invoice.total)].map(csvField).join(",")).join("\\n");
+}
+`,
+        "invoices.test.ts": `import assert from "node:assert/strict";
+import { test } from "node:test";
+import { exportInvoices } from "./invoices.ts";
+test("exports escaped CSV rows", () => {
+  assert.equal(exportInvoices([{ id: "i1", customer: 'A, "B"', total: 5 }]), 'i1,"A, ""B""",5');
+});
+test("exports JSON", () => {
+  assert.equal(exportInvoices([{ id: "i1", customer: "A", total: 5 }], "json"), '[{"id":"i1","customer":"A","total":5}]');
+});
+`
+    }
+};
 export const REVIEW_CASES = [
     {
         id: "01",
@@ -294,6 +322,36 @@ for (const adapter of [pollAlpha, pollBeta]) {
             avoid: [
                 "Do not stop at NEEDS INTENT or infer an unstated product requirement.",
                 "Do not fabricate a numeric cognitive-complexity score or claim a test suite exists."
+            ]
+        }
+    },
+    {
+        id: "08",
+        request: "Add CSV export for invoices. Escape commas, quotes and newlines.",
+        before: INVOICE_EXPORT.before,
+        after: INVOICE_EXPORT.after,
+        rubric: {
+            catch: [
+                "Propose removing the unrequested JSON format, the format parameter and the JSON test as APPROVAL REQUIRED, keeping CSV export, its escaping and the CSV test."
+            ],
+            avoid: [
+                "Do not turn whether JSON was approved into INVESTIGATE or NEEDS INTENT; the request is explicit and does not include JSON.",
+                "Do not suggest more formats, a format registry or more tests, and do not weaken the required CSV escaping."
+            ]
+        }
+    },
+    {
+        id: "09",
+        request: "Add invoice export as CSV or JSON. Callers choose the format; CSV is the default. Escape commas, quotes and newlines in CSV.",
+        before: INVOICE_EXPORT.before,
+        after: INVOICE_EXPORT.after,
+        rubric: {
+            catch: [
+                "KEEP with no findings: both formats and the format parameter were requested, and both tests protect required behavior."
+            ],
+            avoid: [
+                "Do not propose removing JSON or the format parameter.",
+                "Do not demand a format registry, a shared serializer abstraction or more tests."
             ]
         }
     }

@@ -1,9 +1,9 @@
 {
   "name": "pi-prune-skill",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Intent-aware, removal-first review skill with portable Git capture",
+  "description": "Removal-first, intent-aware review skill with portable Git capture",
   "keywords": ["pi-package"],
   "engines": { "node": ">=22" },
   "pi": {
@@ -13,6 +13,8 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "sync-agents": "node scripts/sync-agents.mjs",
+    "eval": "node eval/run.mjs",
     "eval:prepare": "node eval/prepare.mjs"
   }
 }

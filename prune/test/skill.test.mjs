@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,52 +16,62 @@ async function temporaryDirectory(t) {
   return directory;
 }
 const json = async path => JSON.parse(await readFile(path, "utf8"));
+const read = path => readFile(join(skillRoot, path), "utf8");
+const frontmatter = file => file.split("\n---\n")[0].split("\n");
+const body = file => file.split("\n---\n\n")[1];
 
-test("skill references are present and the bundled agent contains the exact complete review contract", async () => {
-  const skill = await readFile(join(skillRoot, "SKILL.md"), "utf8");
-  assert.match(skill, /^---\nname: prune\ndescription: .+\n---/);
-  assert.match(skill, /read both files completely/);
-  const contract = await readFile(join(skillRoot, "references/review-contract.md"), "utf8");
-  const agent = await readFile(join(skillRoot, "agents/prune-reviewer.md"), "utf8");
-  assert.equal(agent.split("\n---\n\n")[1], contract);
+test("skill links resolve and both reviewer agents carry the exact review contract", async () => {
+  const skill = await read("SKILL.md");
+  assert.match(skill, /^---\nname: prune\ndescription: .+\ncompatibility: .+\n---/);
+  for (const match of skill.matchAll(/\]\(([^)#]+\.md)\)/g)) await stat(join(skillRoot, match[1]));
+  const contract = await read("references/review-contract.md");
+  const pi = await read("agents/prune-reviewer.md");
+  const claude = await read("claude/prune-reviewer.md");
+  assert.equal(body(pi), contract);
+  assert.equal(body(claude), contract);
   for (const line of [
-    "tools: read, grep, find, ls", "extensions:", "subagentOnlyExtensions:", "skills:",
+    "name: pi-prune-reviewer", "tools: read, grep, find, ls", "extensions:", "subagentOnlyExtensions:", "skills:",
     "inheritSkills: false", "inheritProjectContext: true", "inheritGlobalContext: false",
     "systemPromptMode: replace", "defaultContext: fresh", "acceptanceRole: read-only", "allowNestedSubagents: false",
-  ]) assert.ok(agent.split("\n").includes(line), line);
-  for (const match of skill.matchAll(/\]\(([^)]+\.md)\)/g)) await stat(join(skillRoot, match[1]));
+  ]) assert.ok(frontmatter(pi).includes(line), line);
+  for (const line of ["name: prune-reviewer", "tools: Read, Grep, Glob", "model: inherit"]) assert.ok(frontmatter(claude).includes(line), line);
   const manifest = await json(join(skillRoot, "package.json"));
   assert.equal(manifest.pi.extensions, undefined);
   for (const path of [...manifest.pi.skills, ...manifest.pi.prompts, ...manifest.pi.subagents.agents]) await stat(join(skillRoot, path));
 });
 
-test("launch instructions preserve the live model/thinking pair without fixed agent defaults", async () => {
-  const skill = await readFile(join(skillRoot, "SKILL.md"), "utf8");
-  const agent = await readFile(join(skillRoot, "agents/prune-reviewer.md"), "utf8");
-  const frontmatter = agent.split("\n---\n")[0];
-  assert.doesNotMatch(frontmatter, /^(model|thinking):/m);
-  assert.match(skill, /current session's exact model and current thinking level together/);
-  assert.match(skill, /model:"provider\/model:level"/);
+test("reviewers follow the session's live model and thinking level without fixed defaults", async () => {
+  const skill = await read("SKILL.md");
+  assert.ok(!frontmatter(await read("agents/prune-reviewer.md")).some(line => /^(model|thinking):/.test(line)));
+  assert.ok(!frontmatter(await read("claude/prune-reviewer.md")).some(line => /^(effort|thinking):/.test(line)));
+  assert.match(skill, /current session's exact model and thinking level/);
+  assert.match(skill, /model: "provider\/id:level"/);
   assert.match(skill, /action:"models"/);
-  assert.match(skill, /operator explicitly requested a reviewer override/);
-  assert.match(skill, /If either value is unavailable, ask the user before launching rather than guessing/);
-  assert.match(skill, /not startup settings as proof of the current level/);
-  assert.match(skill, /Never substitute a fixed `high` or `max`/);
-  assert.match(skill, /unsupported or blocked by policy, report the blocker instead/);
+  assert.match(skill, /explicitly asks for a reviewer override/);
+  assert.match(skill, /Never take it from settings files or substitute a fixed `high` or `max`/);
+  assert.match(skill, /unsupported or blocked by policy, report the blocker/);
+  assert.match(skill, /Don't pass `model` or `effort` unless the user asked for a reviewer override/);
 });
 
-test("capture packets preserve intent gaps and supplied historical evidence privately", async t => {
+test("capture packets keep supplied evidence private and list every evidence file for the reviewer", async t => {
   const directory = await temporaryDirectory(t);
   const { cwd } = await prepareReviewCase(REVIEW_CASES[0], join(directory, "fixture"));
+  const dirty = await prepareReviewCase(REVIEW_CASES[0], join(directory, "dirty"), false);
+  const dirtyTask = await readFile((await capturePacket({ cwd: dirty.cwd, storageRoot: join(directory, "dirty-captures") })).taskPath, "utf8");
+  assert.match(dirtyTask, /Latest-commit alternative.*latest-commit\.diff/);
+
   const packet = await capturePacket({ cwd, storageRoot: join(directory, "captures"), focus: "fallbacks",
-    intent: { requests: [{ entryId: "u1", source: "original user", text: "Keep the fallback", attachmentCount: 0 }], gaps: ["Earlier originals unavailable"] },
+    intent: { note: "Parent note.", requests: [{ source: "user message", text: "Keep the fallback" }], gaps: ["Earlier originals unavailable"] },
     workflow: {
-      plans: [{ path: join(cwd, "plan.md"), referencedBy: ["user:u1"], content: "Approved step" }],
-      activity: [{ entryId: "t1", tool: "read", inputPreview: "plan.md", text: "Historical evidence", truncated: false, isError: false }],
+      plans: [{ path: join(cwd, "plan.md"), referencedBy: ["user message 1"], content: "Approved step" }],
+      activity: [{ tool: "read", inputPreview: "plan.md", text: "Historical evidence", truncated: false, isError: false }],
     },
   });
-  assert.deepEqual((await json(packet.intentPath)).gaps, ["Earlier originals unavailable"]);
-  assert.equal((await json(packet.intentPath)).requests[0].text, "Keep the fallback");
+  assert.equal(packet.scope, "latest commit (first-parent comparison)");
+  const intent = await json(packet.intentPath);
+  assert.deepEqual(intent.gaps, ["Earlier originals unavailable"]);
+  assert.equal(intent.requests[0].text, "Keep the fallback");
+  assert.match(intent.note, /compacted or earlier messages may be missing.* Parent note\.$/);
   assert.equal((await json(packet.scopePath)).focus, "fallbacks");
   const workflow = await json(packet.workflowPath);
   assert.equal(await readFile(workflow.plans[0].snapshotPath, "utf8"), "Approved step");
@@ -69,29 +79,52 @@ test("capture packets preserve intent gaps and supplied historical evidence priv
   assert.equal(workflow.plans[0].content, undefined);
   assert.equal(workflow.activity[0].text, undefined);
   assert.equal(workflow.sessionCwd, cwd);
-  assert.match(workflow.warnings.join("\n"), /does not inspect session history/);
-  assert.match(await readFile(packet.taskPath, "utf8"), /relative links against the original source path/);
+  assert.match(workflow.note, /does not inspect session history/);
+  const task = await readFile(packet.taskPath, "utf8");
+  assert.doesNotMatch(task, /Latest-commit alternative/);
+  assert.match(task, /workflow\.json/);
+  assert.match(task, /relative links against its original path/);
+  assert.match(task, /write no files/);
   assert.equal((await stat(packet.directory)).mode & 0o777, 0o700);
   for (const path of [packet.intentPath, packet.scopePath, packet.workflowPath, packet.patchPath, packet.taskPath, workflow.plans[0].snapshotPath, workflow.activity[0].outputPath]) {
     assert.equal((await stat(path)).mode & 0o777, 0o600);
   }
 });
 
-test("CLI captures without session/model dependencies and explicitly marks empty intent", async t => {
+test("the optional project intent note joins every capture once", async t => {
+  const directory = await temporaryDirectory(t);
+  const { cwd } = await prepareReviewCase(REVIEW_CASES[0], join(directory, "fixture"));
+  const anchor = join(cwd, ".pi", "prune-intent.md");
+  await mkdir(join(cwd, ".pi"));
+  await writeFile(anchor, "Goal: Follow the runtime thinking level.\n");
+  const automatic = await json((await capturePacket({ cwd, storageRoot: join(directory, "automatic") })).workflowPath);
+  assert.equal(automatic.plans.length, 1);
+  assert.equal(automatic.plans[0].path, anchor);
+  assert.match(await readFile(automatic.plans[0].snapshotPath, "utf8"), /Follow the runtime thinking level/);
+  const supplied = await json((await capturePacket({ cwd, storageRoot: join(directory, "supplied"),
+    workflow: { plans: [{ path: ".pi/prune-intent.md", referencedBy: ["user message 1"], content: "Goal: supplied" }] } })).workflowPath);
+  assert.equal(supplied.plans.length, 1);
+  assert.deepEqual(supplied.plans[0].referencedBy, ["user message 1"]);
+});
+
+test("CLI prints the launch essentials and marks missing intent", async t => {
   const directory = await temporaryDirectory(t);
   const { cwd } = await prepareReviewCase(REVIEW_CASES[0], join(directory, "fixture"));
   const stdout = execFileSync(process.execPath, [join(skillRoot, "scripts/capture.mjs"), "--cwd", cwd, "--reference", "HEAD", "--output", join(directory, "cli")], { encoding: "utf8" });
   const packet = JSON.parse(stdout);
+  assert.equal(packet.scope, "current tree guided by reference commit");
+  assert.equal(packet.root, (await json(packet.scopePath)).root);
   assert.ok((await json(packet.scopePath)).referenceCommit);
   assert.deepEqual((await json(packet.intentPath)).requests, []);
-  assert.match((await json(packet.intentPath)).gaps.join("\n"), /parent must add/);
-  assert.ok(await readFile(packet.taskPath, "utf8"));
+  assert.match((await json(packet.intentPath)).gaps.join("\n"), /No intent was supplied/);
+  assert.equal(packet.task, undefined);
   await assert.rejects(capturePacket({ cwd, intent: {}, storageRoot: join(directory, "bad") }), /requests array/);
+  await assert.rejects(capturePacket({ cwd, intent: { requests: [{ source: "user message" }] }, storageRoot: join(directory, "bad") }), /requests array/);
 });
 
-test("all seven behavioral fixtures prepare complete packets without revealing gold rubrics", async t => {
+test("all behavioral fixtures prepare complete packets without revealing gold rubrics", async t => {
   const directory = await temporaryDirectory(t);
-  assert.deepEqual(REVIEW_CASES.map(item => item.id), ["01", "02", "03", "04", "05", "06", "07"]);
+  assert.deepEqual(REVIEW_CASES.map(item => item.id), ["01", "02", "03", "04", "05", "06", "07", "08", "09"]);
   for (const committed of [true, false]) {
     for (const reviewCase of REVIEW_CASES) {
       const { packet } = await prepareReviewCase(reviewCase, join(directory, `${reviewCase.id}-${committed}`), committed);

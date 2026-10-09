@@ -1,42 +1,22 @@
 # Prune
 
-An intent-aware, removal-first review skill. It challenges both whether behavior is needed and how it is implemented. Independent read-only proposals, not automatic fixes or a general enhancement backlog.
+A removal-first, intent-aware review for coding agents. After each increment it asks of every new part: does this earn its place, and what breaks if it goes? It proposes what to delete, narrow or simplify, and leaves every decision to you. It never edits.
 
-## Layout and progressive disclosure
+## Why
 
-- `SKILL.md`: principle, required reading, invocation, complete workflow and output essentials.
-- `references/review-contract.md`: the original review prompt, preserved verbatim.
-- `references/evidence.md`: authority/provenance, task/plan collection, Git scope, privacy and limitations.
-- `agents/prune-reviewer.md`: the same full rubric in a standard fresh read-only pi-subagents agent definition. No pi-prune extension or runtime registration.
-- `scripts/`: dependency-free Node/Git capture and packet writing, migrated from pi-prune.
-- `prompts/prune.md`: optional `/prune` shortcut.
-- `eval/`: all seven original behavioral fixtures, human rubrics and no-token preparation.
-- `test/`: migrated Git regressions plus skill/packet/fixture tests.
+Agents add working software faster than anyone can shape it. Each increment brings something that looks reasonable on its own: an option nobody asked for, a fallback for a case that cannot happen, an interface with one implementation, a copy of an existing helper, a test that pins the implementation. The next agent copies what it finds, so the accumulation compounds. Ordinary reviews make it worse, because reviewers suggest additions.
 
-The references are **required**, not optional reading. Progressive disclosure keeps the entry point navigable without compressing away the review contract.
+Prune is the counterweight, run while each increment is still small:
 
-## Install
+- **The burden of proof is on additions.** Existing code and tests do not prove they are needed.
+- **Intent decides necessity.** The user's own words define the goal. Agent-written plans drift, so they explain the step but cannot turn an assumption into a requirement.
+- **Independent.** A fresh read-only reviewer sees the evidence and the code, never the implementer's reasoning.
+- **Proposals, not work orders.** Findings say who must decide. Nothing is applied without your approval.
+- **KEEP is success.** No quota, no praise, no improvement backlog.
 
-Requires Node 22+, Git and pi-subagents for independent review. The simplest distributable install loads the skill, prompt and agent without any prune extension:
+It is judgment support, not proof of quality or a merge gate.
 
-```sh
-pi install npm:pi-subagents
-pi install "$SRC/skills/prune"
-```
-
-Alternatively symlink the resources into the existing Pi directories:
-
-```sh
-agent_dir="${PI_CODING_AGENT_DIR:-${PI:-$HOME/.pi/agent}}"
-mkdir -p "$agent_dir/skills" "$agent_dir/agents" "$agent_dir/prompts"
-ln -s "$SRC/skills/prune" "$agent_dir/skills/prune"
-ln -s "$SRC/skills/prune/agents/prune-reviewer.md" "$agent_dir/agents/pi-prune-reviewer.md"
-ln -s "$SRC/skills/prune/prompts/prune.md" "$agent_dir/prompts/prune.md"
-```
-
-Do not overwrite existing paths blindly. Disable/remove the old pi-prune extension discovery link or package before `/reload`: its extension command otherwise wins over the `/prune` prompt, and its runtime agent may collide with the file-defined reviewer. Keep its source/archive if desired. A skill-only installation works for explicitly requested direct review, but does not install the independent reviewer or slash shortcut.
-
-Run `/reload` after changing resources. Then:
+## Use
 
 ```text
 /prune
@@ -46,28 +26,73 @@ Run `/reload` after changing resources. Then:
 /prune --reference abc123 challenge surviving fallbacks
 ```
 
-`/skill:prune` accepts the same arguments. Run after each coherent increment: implement, review, inspect proposals, apply accepted changes, verify, continue. A clean tree reviews only the latest commit; a dirty tree includes all working changes. Focus does not narrow Git scope or grant edit permission.
+The loop: implement one increment, run `/prune`, read the proposals, accept what you want, apply and verify, continue. A dirty tree reviews all uncommitted changes; a clean tree reviews the latest commit. For older commits, review one `--reference` at a time, newest first. Focus text sets priorities; it never narrows the Git scope or grants permission to edit.
 
-## What changed from the extension
+## Install
 
-The pruning rubric, three passes, verdicts, finding classifications, safeguards, rebuild criteria, reference-commit semantics, Git capture and evaluation fixtures remain. Capture scripts never launch models, run tests, update tasks or change the Git index/checkout.
+Requires Node 22+ and Git. Don't overwrite existing paths.
 
-**Intent collection is now best-effort by the parent.** There are no input/session hooks, pre-expansion original recording, automatic active-branch traversal across compaction, exact queued-input provenance matching, automatic task/plan discovery, runtime agent registration or live thinking-level inheritance. Missing originals and uncertain approval must be disclosed, not reconstructed. The skill asks for relevant evidence explicitly; it does not dump parent reasoning into the fresh reviewer.
+**pi.** Installs the skill, the `/prune` prompt and the read-only `pi-prune-reviewer` agent:
 
-The optional `.pi/prune-intent.md` continuity anchor remains supported. Reports and packets stay under `$DATA/apps/pi-prune/reviews/` (fallback `~/data/apps/pi-prune/reviews/`), with private permissions and no automatic deletion. Capture limits and live-file caveats are detailed in `references/evidence.md`.
+```sh
+pi install npm:pi-subagents
+pi install "$SRC/skills/prune"
+```
 
-The bundled reviewer uses only `read,grep,find,ls`, no ambient extensions/skills/global context and no nested delegation. This is a tool ceiling, not an OS sandbox. Direct review is explicitly labeled non-independent and instruction-level read-only. A child infrastructure failure never silently becomes a direct/CLI review.
+Or link the pieces yourself:
 
-The parent passes the current session's exact model and live thinking level together as `model:"provider/model:level"`, unless the operator explicitly requests a reviewer override. The reviewer definition pins neither model nor thinking. The explicit per-run pair takes precedence over subagent defaults and configured reviewer model/thinking values; request a reviewer-specific override explicitly if you want to use it. Startup settings are not proof of the current thinking level. If the pair is unavailable, the parent asks rather than guessing; unsupported or policy-blocked pairs stop the launch rather than silently downgrading. Supported Pi thinking levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. There is no universal `high` or `max` default and no extension hook automatically propagating the live level.
+```sh
+agent_dir="${PI_CODING_AGENT_DIR:-${PI:-$HOME/.pi/agent}}"
+mkdir -p "$agent_dir/skills" "$agent_dir/agents" "$agent_dir/prompts"
+ln -s "$SRC/skills/prune" "$agent_dir/skills/prune"
+ln -s "$SRC/skills/prune/agents/prune-reviewer.md" "$agent_dir/agents/pi-prune-reviewer.md"
+ln -s "$SRC/skills/prune/prompts/prune.md" "$agent_dir/prompts/prune.md"
+```
+
+Run `/reload` afterwards. Remove the old pi-prune extension first if it is installed: its `/prune` command wins over the prompt. The reviewer runs on your session's current model and thinking level. Pi does not expose the thinking level to the model, so the parent asks for it once per session unless you have already said it.
+
+**Claude Code.** The skill is the `/prune` command; the agent is the independent reviewer:
+
+```sh
+mkdir -p ~/.claude/skills ~/.claude/agents
+ln -s "$SRC/skills/prune" ~/.claude/skills/prune
+ln -s "$SRC/skills/prune/claude/prune-reviewer.md" ~/.claude/agents/prune-reviewer.md
+```
+
+The reviewer has only `Read`, `Grep` and `Glob`, and inherits the session's model and effort.
+
+**Other hosts.** Any agent that loads Agent Skills can run prune. Without a read-only reviewer agent it reviews directly in the same session and says so at the top of the report; that review is neither independent nor tool-enforced read-only.
+
+## How it works
+
+1. The parent writes the user's relevant requests, verbatim, to `intent.json`, plus optional plans and task notes in `workflow.json`.
+2. `scripts/capture.mjs` captures the Git increment and that evidence into a private packet under `$DATA/apps/pi-prune/reviews/` (default `~/data/apps/pi-prune/reviews/`). It never changes the repository, runs tests or calls a model.
+3. A fresh reviewer follows `references/review-contract.md` and returns a verdict (KEEP, PRUNE, REBUILD CANDIDATE or NEEDS INTENT) with at most five findings, each labeled SAFE SIMPLIFICATION, APPROVAL REQUIRED or INVESTIGATE.
+4. The parent relays the findings without adding to them and waits for your decision.
+
+Packets can contain prompts, code and task context, are private (`0700`/`0600`) and are never deleted automatically. Everything the reviewer reads goes to its model provider.
+
+## Files
+
+- `SKILL.md`: the procedure the parent follows on any host.
+- `references/review-contract.md`: the reviewer's complete instructions, the single source for both agent files.
+- `references/evidence.md`: evidence formats, Git scope, limits, privacy and the `.pi/prune-intent.md` anchor.
+- `agents/prune-reviewer.md`: the pi-subagents reviewer. `claude/prune-reviewer.md`: the Claude Code reviewer. Both embed the contract verbatim.
+- `prompts/prune.md`: the pi `/prune` shortcut.
+- `scripts/`: dependency-free capture.
+- `eval/`: behavioral fixtures with human rubrics and a live runner. `test/`: plumbing tests.
 
 ## Development
 
 ```sh
 npm test
+npm run sync-agents
 npm run eval:prepare -- --list
-npm run eval:prepare -- --case 02 --working
+npm run eval -- --model PROVIDER/MODEL --thinking high --case 08
 ```
 
-No dependencies or install step are required for capture, tests or fixture preparation. Tests do not prove useful model judgment or a successful paid child launch. See `eval/README.md` for human grading and live-evaluation boundaries.
+Tests check capture, packets and that both agents carry the exact contract. They do not prove review judgment. Change the contract only in `references/review-contract.md`, run `npm run sync-agents` to copy it into both agents, and measure the change with the live evaluation; see [eval/README.md](eval/README.md).
 
-The approach borrows from [Exhale](https://github.com/tools4imps/exhale-ruby): contraction after expansion, change-relative complexity review, justified exceptions and executable evidence. It does not port Ruby analysis, deterministic scores, whole-codebase gating or Contract configuration.
+## History
+
+Prune began as the pi-prune extension (`$SRC/pi/pi-prune`), which recorded original input through session hooks and registered its reviewer at runtime. The skill keeps its rubric, Git capture and fixtures but relies on the parent to supply intent, so compacted or older requests are disclosed as gaps instead of recovered. The approach borrows from [Exhale](https://github.com/tools4imps/exhale-ruby): contraction after expansion, change-relative review and justified exceptions, without its Ruby analysis, scores or whole-codebase gate.

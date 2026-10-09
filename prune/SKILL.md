@@ -1,6 +1,7 @@
 ---
 name: prune
-description: Intent-aware, removal-first review of a coherent increment or commit. Use when asked to prune, chisel, challenge unnecessary complexity, or review whether implemented behavior earns its place. Read-only proposals, not general polish or automatic fixes.
+description: Removal-first, intent-aware review of one increment (uncommitted changes, the latest commit, or a reference commit). Use when asked to prune, chisel, or challenge whether new behavior, options, fallbacks, abstractions or tests earn their place. Returns read-only proposals for approval, not fixes, polish or an improvement backlog.
+compatibility: Requires Node 22+ and Git. Independent review needs a read-only reviewer agent (pi with pi-subagents, or Claude Code); other hosts get a disclosed direct review.
 ---
 
 # Prune
@@ -9,63 +10,115 @@ description: Intent-aware, removal-first review of a coherent increment or commi
 >
 > Antoine de Saint-Exupéry, *Airman's Odyssey*
 
-**Build the simplest justified behavior, with the clearest implementation, from the start.** Prune is a corrective backstop, not permission to overbuild. Question both how behavior is implemented and whether it is needed; existing code and tests do not establish necessity. Keep chiseling until every remaining part has a clear purpose. Judge simplicity by how much someone must understand, not line count, while preserving necessary behavior and safeguards.
+**Build the simplest justified behavior, with the clearest implementation, from the start.** Prune is the backstop, not permission to overbuild.
 
-Agents can accumulate duplicated logic, loose contracts, speculative abstractions, tangled state and tests that only confirm the implementation. Review after a new commit or a coherent set of uncommitted changes, while the increment is small, before the next agent copies avoidable complexity.
+Coding agents add faster than anyone can shape. Each increment tends to bring something that looks reasonable on its own: an option nobody asked for, a fallback for a case that cannot happen, an interface with one implementation, a copy of a helper that already exists, a test that pins the implementation. The next agent copies what it finds, so this compounds. Ordinary reviews make it worse, because reviewers suggest more.
 
-**Removal is the default.** No routine enhancements, extra artifacts, speculative safeguards or coverage for its own sake. Demonstrated violations of required behavior warrant the smallest correction, not extra capabilities. New behavior requires an exceptional breakthrough, consequential benefit, stated cost and explicit approval. Deliberate duplication and clear boundaries can remain. KEEP with no findings is a successful review.
+Prune pushes the other way. It reviews each increment while it is small and asks of every part: does this earn its place, and what breaks if it goes? The burden of proof is on additions; existing code and tests do not prove themselves necessary. Simpler means less to understand, not fewer lines. Required behavior and real safeguards stay. **KEEP with no findings is a successful review.**
 
-This is judgment support, not proof of quality, a finding quota or an automatic merge gate.
+## Rules
 
-## Required reading
+1. **Read-only.** A review never edits, commits, runs tests or changes task state. It writes only its packet and report. Don't change the reviewed files while it runs.
+2. **Proposals, not work orders.** Apply a finding only after the user accepts it, then verify it.
+3. **Explicit only.** One review per request. Never start reviews on your own, for example after every commit.
+4. **Evidence, not reasoning.** The reviewer gets the user's words, the diff and the repository. Never the transcript or the implementer's reasoning.
 
-Before preparing or reviewing anything, read both files completely:
-
-- [Review contract](references/review-contract.md): the complete authority rules, all three review passes, safeguards, rebuild criteria and report format. Do not substitute this summary for it.
-- [Evidence collection](references/evidence.md): intent provenance, task/plan discovery, packet format, scope rules, privacy and limits.
-
-Resolve every bundled path against this skill directory, not the project cwd. Read large files in pages until complete. The reviewer also reads the complete contract, not just this entry point.
-
-## Invocation and boundary
+## Invocation
 
 ```text
-/skill:prune
-/skill:prune focus on unnecessary fallbacks
-/skill:prune challenge the export abstraction
-/skill:prune --reference abc123
-/skill:prune --reference abc123 challenge surviving fallbacks
+/prune
+/prune focus on unnecessary fallbacks
+/prune --reference abc123
+/prune --reference abc123 challenge surviving fallbacks
 ```
 
-The installed `/prune` prompt is a shortcut for the same skill. Parse an optional leading `--reference <commit>`; everything remaining is focus text. A missing reference is an error. Focus prioritizes the review, never selects Git paths, expands scope or authorizes edits.
+In pi, `/skill:prune` takes the same arguments. An optional leading `--reference <commit>` selects a commit; `--reference` without a commit is an error, so stop and show the usage. The remaining text is the focus. It sets priorities; it never narrows the Git scope, widens the review or authorizes edits.
 
-Never automatically edit, commit, run tests, update task state or start a review after every commit. Only writes to private review artifacts are permitted. Do not change reviewed files while a review runs.
+What gets reviewed:
+
+- **Uncommitted changes exist:** all of them (staged, unstaged and untracked), not only yours.
+- **Clean tree:** the latest commit. Older unreviewed commits need `--reference`, one commit per review, newest first.
+- **`--reference <commit>`:** today's code that survives from that commit. Superseded parts are skipped, never restored.
 
 ## Procedure
 
-1. **Establish evidence.** Record the session cwd. Collect relevant available user requests, clarifications, narrowly selected proposal referents, task-context notes, relevant historical tool evidence and referenced plans as described in `references/evidence.md`. Preserve source IDs/paths and evidence gaps. Never turn an agent-written summary into an original user quote. Do not export the full transcript or the implementer's reasoning. A skill cannot recover missing pre-compaction originals or original input before expansion.
-2. **Capture the increment.** Run the bundled script with Node 22+ and Git. Use an absolute script path and the actual session cwd:
-   ```sh
-   node /absolute/path/to/prune/scripts/capture.mjs --cwd /absolute/project/cwd
-   node /absolute/path/to/prune/scripts/capture.mjs --cwd /absolute/project/cwd --reference abc123 --focus "challenge surviving fallbacks"
+`SKILL_DIR` is this skill's directory (in Claude Code: `${CLAUDE_SKILL_DIR}`). Use absolute paths.
+
+### 1. Write the intent evidence
+
+The reviewer judges necessity against what the user actually asked for. Spend a few steps on this, not an investigation.
+
+Create a temporary directory outside the repository (`mktemp -d`) and write `intent.json` there:
+
+```json
+{
+  "requests": [
+    { "source": "user message", "text": "The user's exact words" }
+  ],
+  "gaps": []
+}
+```
+
+- Copy the user's requests, constraints and non-goals that concern this increment **verbatim** from this conversation, oldest first.
+- `/prune` and the instructions it expands to are not a request about the code. Its focus text can be.
+- A short assent ("yes", "do it", "option 2") needs what it answered: add `"referencedProposal": { "text": "..." }` holding only the final assistant proposal it accepted. No reasoning, no tool narration.
+- A compaction summary, handoff or recap is not the user's words. Include it only with a `source` that says what it is.
+- Missing intent is normal. Say what is missing in `gaps`, one sentence each, and move on. Don't search transcript archives, other sessions or task databases unless the user points you there. Never invent quotes, IDs or timestamps.
+- Plans, task notes or tool outputs that explain the step go in an optional `workflow.json`; see [evidence](references/evidence.md). Skip it when there are none. A `.pi/prune-intent.md` anchor at the repository root is picked up automatically.
+
+### 2. Capture the increment
+
+```sh
+node SKILL_DIR/scripts/capture.mjs --cwd <session cwd> --intent <tmp>/intent.json
+```
+
+`--cwd` is the repository to review, normally the session's working directory. Add `--workflow <tmp>/workflow.json`, `--reference <commit>` and `--focus "<focus text>"` when they apply. The script prints JSON with `root`, `scope`, `directory`, `taskPath` and `reportPath`. It never changes the repository. If it fails, report its error and stop; don't choose another scope.
+
+### 3. Run the review
+
+Use the first row that applies:
+
+| Situation | Do this |
+| --- | --- |
+| The user asked for a direct review | Direct review |
+| pi, with pi-subagents and the `pi-prune-reviewer` agent | [Launch on pi](#launch-on-pi) |
+| Claude Code, with the `prune-reviewer` agent | [Launch on Claude Code](#launch-on-claude-code) |
+| Anything else | Direct review. If this host can start a fresh-context subagent limited to read and search tools, use it instead: the [review contract](references/review-contract.md) as its instructions, the text of `task.txt` as its task. |
+
+If an independent launch fails or the reviewer is misconfigured, report the error and the packet `directory`, then stop. Don't retry with another agent or launcher, widen its tools, install agents or switch to a direct review unless the user asks.
+
+**Direct review:** read the [review contract](references/review-contract.md) completely and follow it for the task in `task.txt`. Start the report with `Direct review by the implementing session: not independent, read-only by instruction only.` The contract's "write no files" covers everything except this report: save it to `reportPath`.
+
+#### Launch on pi
+
+1. If the `subagent` tool is not loaded, call `subagents_enable`.
+2. Call `subagent({action:"list", capabilities:true})`. The `pi-prune-reviewer` row must exist, be allowed to run and have exactly the tools `read, grep, find, ls`. Otherwise treat it as a failed launch. Never substitute another agent.
+3. The reviewer runs on the current session's exact model and thinking level. `subagent({action:"models"})` shows the model as `Current session model: provider/id`. Pi does not show you the thinking level: unless the user has stated it in this session, ask once, "The reviewer will use provider/id. Which thinking level: off, minimal, low, medium, high, xhigh or max?" Never take it from settings files or substitute a fixed `high` or `max`. Use a different pair only when the user explicitly asks for a reviewer override.
+4. Launch with the full text of `task.txt`:
+
+   ```js
+   subagent({ agent: "pi-prune-reviewer", task: "<task.txt>", model: "provider/id:level",
+     context: "fresh", cwd: "<root>", async: true, skill: false,
+     output: "<reportPath>", outputMode: "file-only", artifacts: true })
    ```
-   It returns packet paths including `taskPath` and `reportPath`. Read `scope.json`, `intent.json`, `workflow.json` and `task.txt`. Fill the deliberately empty intent/workflow evidence using the formats in `references/evidence.md`, retaining the script's limitation notes. Store relevant source snapshots privately in this packet directory. Alternatively, supply prepared JSON using `--intent PATH --workflow PATH` to capture and snapshot it in one step. Do not launch a review with empty evidence when relevant evidence is available.
-3. **Choose the review mode honestly.** Explicit `/prune`, `/skill:prune` or a request to use this skill authorizes one independent reviewer as part of this workflow, subject to host delegation policy. Enable pi-subagents if necessary; read its skill and tool-reference guide, then call `subagent({action:"list",capabilities:true})`. Use the bundled `pi-prune-reviewer` only if its discovered configuration is executable and matches the read-only contract: `read,grep,find,ls`, fresh context, no ambient extensions, skills, global instructions or nested delegation; repository instructions are retained. Do not substitute a mutation-capable generic reviewer. Use the current session's exact model and current thinking level together, unless the operator explicitly requested a reviewer override. Before specifying a model, call `subagent({action:"models"})` to confirm its exact provider/id. Pass the resolved pair explicitly as `model:"provider/model:level"`; do not rely on subagent defaults. Use live session information, not startup settings as proof of the current level. If either value is unavailable, ask the user before launching rather than guessing. Never substitute a fixed `high` or `max`, change tiers, or silently downgrade. If the requested pair is unsupported or blocked by policy, report the blocker instead.
-4. **Launch one bounded child.** Read `task.txt` and pass its complete text as the task, with `agent:"pi-prune-reviewer"`, `model:"provider/model:level"` using the pair resolved in step 3, `context:"fresh"`, `cwd:scope.root`, `async:true`, `skill:false`, `output:reportPath`, `outputMode:"file-only"`, `artifacts:true`. No forked transcript. The agent definition contains the full rubric. Record the actual run ID and output reference in the packet, announce scope/report location and yield for native completion. Never poll or call a wait tool merely to wait for native notifications. If the child is missing, disabled or misconfigured, report the blocker and preserved capture paths; do not silently install/update agents, widen tools or switch launchers. Follow pi-subagents failure/status/stop rules. Inspect an uncertain launch before retrying.
-5. **Review directly only when appropriate.** If delegation is not authorized, or the user explicitly requests a direct review, perform the full contract yourself. Disclose that this is not an independent fresh-context review and that read-only behavior is instruction-level, not tool-enforced. Do not silently fall back to this mode after a child infrastructure failure. In direct mode, write only the final report to `reportPath`.
-6. **Deliver proposals, not work orders.** Read the completed report. Return its verdict and material actionable findings with the report path and evidence limits. Check it against the removal-first contract rather than relaying an enhancement backlog. Completion does not authorize fixes. Apply only separately accepted findings, then verify, before continuing implementation.
 
-## Review and output essentials
+   If the pair is unsupported or blocked by policy, report the blocker; don't downgrade.
+5. Save the run ID and output reference to `launch.json` in the packet directory. Tell the user the scope and report path, then end your turn. Completion arrives as a notification, so don't poll or call a wait tool. If a launch's outcome is unclear, check its status before any retry.
 
-Perform **all three passes**: intent/necessity; implementation simplicity with actual callers, contracts and concrete execution paths; test necessity and evidence. Missing intent limits product judgments, not supported implementation findings. Inspect thoroughly, report sparingly.
+#### Launch on Claude Code
 
-Verdicts: **KEEP**, **PRUNE**, **REBUILD CANDIDATE**, **NEEDS INTENT**.
+1. Call the Agent tool with `subagent_type: "prune-reviewer"`, `description: "Prune review"` and the full text of `task.txt` as the `prompt`. Don't pass `model` or `effort` unless the user asked for a reviewer override: the agent inherits the session's model and effort.
+2. Write the agent's final response, unchanged, to `reportPath`.
 
-Every material finding needs current `file:line` evidence, the smallest better shape, what must remain, removal risk/tradeoff and targeted verification. Classify it as **SAFE SIMPLIFICATION**, **APPROVAL REQUIRED** or **INVESTIGATE**. Rebuilds always require approval: identify the exact discard boundary, explain why incremental cleanup is worse, preserve useful requirements/contracts/tests/security and unrelated work, and sketch a smaller replacement. Missing intent is not a reason to rebuild blindly.
+### 4. Deliver
 
-A KEEP report needs only verdict, brief reason, scope and material limits. No praise, empty checklist sections, complexity scores or generic improvement backlog. State that tests were not run. Never claim verification or approval from a review.
+1. Read the report. If it reviewed a different scope than you captured, say the review failed instead of presenting it.
+2. Reply with the verdict and its reason, each finding as written (label, location, proposed change), any decision the user must make, the report path, and the evidence limits in one line.
+3. Add no findings of your own. Leave out any proposal to add tests, options, abstractions, logging or docs unless it is the smallest fix for a demonstrated defect or a labeled breakthrough, and say how many you left out.
+4. End by saying nothing was changed and asking which findings to apply. Apply only accepted findings, then run the relevant checks before continuing other work.
 
-## Continuity and evaluation
+## More
 
-An optional operator-maintained `.pi/prune-intent.md` can anchor goals, non-goals and constraints across sessions. It is not another required ceremony and its filename is not proof of approval. See `references/evidence.md`.
-
-For maintaining the skill, read [evaluation guidance](eval/README.md). Behavioral fixtures and human grading rubrics are preserved in `eval/cases.mjs`; do not give gold rubrics to reviewers. Plumbing tests are not proof of review judgment.
+- [Review contract](references/review-contract.md): the reviewer's complete instructions. Required reading for a direct review.
+- [Evidence](references/evidence.md): `workflow.json`, capture scope and limits, privacy, the `.pi/prune-intent.md` anchor.
+- [Evaluation](eval/README.md): behavioral fixtures and a live runner for judging reviewer quality. Tests prove plumbing, not judgment.
