@@ -102,7 +102,7 @@ async function main() {
   console.log(`Evaluation ${directory}: ${values.host} ${values.model}${values.thinking ? ` thinking ${values.thinking}` : ""}. Rubrics are written after each review.`);
   for (const reviewCase of cases) {
     const caseDirectory = join(directory, reviewCase.id);
-    const { cwd, packet } = await prepareReviewCase(reviewCase, caseDirectory, !values.working);
+    const { cwd, packet } = await prepareReviewCase(reviewCase, caseDirectory, !values.working, prompt);
     const started = Date.now();
     const options = { prompt, task: await readFile(packet.taskPath, "utf8"), model: values.model, thinking: values.thinking };
     const run = await review(host, values.bin ?? values.host, options, cwd);

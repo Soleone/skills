@@ -64,9 +64,11 @@ test("claude runs stop at the tool-call bound and report the failure without ret
     { type: "assistant", message: { content: Array.from({ length: 41 }, () => toolUse) } },
     { type: "result", result: "**Verdict: KEEP.** Too late.", total_cost_usd: 0.5 },
   ]);
+  const baseline = join(directory, "baseline.md");
+  await writeFile(baseline, "Baseline contract under comparison.\n");
   const failure = (() => {
     try {
-      execFileSync(process.execPath, [runner, "--host", "claude", "--bin", host, "--model", "sonnet", "--case", "01", "--output", join(directory, "out")], { encoding: "utf8", stdio: "pipe" });
+      execFileSync(process.execPath, [runner, "--host", "claude", "--bin", host, "--model", "sonnet", "--case", "01", "--prompt-file", baseline, "--output", join(directory, "out")], { encoding: "utf8", stdio: "pipe" });
     } catch (error) { return error; }
   })();
   assert.ok(failure, "the runner should exit non-zero");
@@ -76,6 +78,10 @@ test("claude runs stop at the tool-call bound and report the failure without ret
   const argv = await json(join(directory, "argv.json"));
   assert.equal(argv[argv.indexOf("--tools") + 1], "Read,Grep,Glob");
   assert.equal(argv.includes("--effort"), false);
+  // A baseline must reach the reviewer both as its system prompt and as the packet's contract.
+  assert.equal(argv[argv.indexOf("--system-prompt") + 1], "Baseline contract under comparison.\n");
+  const [packet] = await readdir(join(caseDirectory, "reviews"));
+  assert.equal(await readFile(join(caseDirectory, "reviews", packet, "contract.md"), "utf8"), "Baseline contract under comparison.\n");
 });
 
 test("live runs require an explicit model", () => {

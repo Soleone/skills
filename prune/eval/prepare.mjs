@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { capturePacket } from "../scripts/capture.mjs";
 import { REVIEW_CASES } from "./cases.mjs";
 
-export async function prepareReviewCase(reviewCase, directory, committed = true) {
+export async function prepareReviewCase(reviewCase, directory, committed = true, contract) {
   const cwd = join(directory, "repo");
   await mkdir(cwd, { recursive: true, mode: 0o700 });
   const git = (...args) => execFileSync("git", [
@@ -31,7 +31,7 @@ export async function prepareReviewCase(reviewCase, directory, committed = true)
     entryId: "fixture-request", timestamp: new Date().toISOString(), source: "user-message",
     text: reviewCase.request, attachmentCount: 0,
   }];
-  const packet = await capturePacket({ cwd, intent: { requests }, storageRoot: join(directory, "reviews") });
+  const packet = await capturePacket({ cwd, intent: { requests }, contract, storageRoot: join(directory, "reviews") });
   return { cwd, packet };
 }
 

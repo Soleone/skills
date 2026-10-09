@@ -68,13 +68,15 @@ The patch is a snapshot, but the reviewer reads live files. Don't change reviewe
 
 Packets live under `$DATA/apps/pi-prune/reviews/`, falling back to `~/data/apps/pi-prune/reviews/`. Each review gets a new directory, mode `0700`, with files at `0600`:
 
+- `task.txt`: the reviewer's task; `contract.md`: a copy of the review contract it follows, so the packet is a complete handoff to any reviewer and records which rules were used
 - `intent.json`, `scope.json`, `workflow.json`: the evidence and the captured scope
 - `change.diff`: the primary patch; `latest-commit.diff` when offered
 - `plan-N.md`, `activity-N.txt`: snapshots of supplied evidence
-- `task.txt`: the reviewer's task
-- `review.md`: the final report; `launch.json`: the run ID, when launched
+- `review.md`: the final report; `launch.json`: the host, model, thinking level and any run ID
 
-Packets can contain prompts, code, task context and tool output, and are never deleted automatically. Everything the reviewer reads is sent to its model provider, so include only relevant evidence, redact secrets and respect the user's exclusions. A completed launch proves neither good judgment nor quality, and no review runs tests.
+`capture.mjs --verify <directory>` re-reads the repository and reports whether its HEAD, status or captured diff changed since capture. Run it after every review: unless the host restricted the reviewer to read and search tools, read-only was only an instruction.
+
+Packets can contain prompts, code, task context and tool output, and are never deleted automatically. In Claude Code, reading the packet is a read outside the project, which may ask for permission; an allow rule such as `Read(~/data/apps/pi-prune/reviews/**)` in `~/.claude/settings.json` removes the prompts. Everything the reviewer reads is sent to its model provider, so include only relevant evidence, redact secrets and respect the user's exclusions. A completed launch proves neither good judgment nor quality, and no review runs tests.
 
 ## Continuity anchor
 

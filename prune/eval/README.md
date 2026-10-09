@@ -24,7 +24,7 @@ node eval/run.mjs --model PROVIDER/MODEL --prompt-file /path/to/baseline-contrac
 
 Each case directory receives the fixture `repo/`, the packet with `review.md`, `trace.jsonl` (the host's raw events), `observations.json` (model, duration, cost, tool calls, failure) and `rubric.json`, written only after the review finishes. Rubrics never enter the fixture repository, the packet or the reviewer's task. Use `--bin PATH` when the host binary is not on `PATH`.
 
-The runner exercises the contract and its isolation, not pi-subagents or Claude Code agent loading, launch settings or completion delivery.
+The runner exercises the contract under the strictest isolation, with read and search tools only. It does not exercise the host's subagent launch, which in real use may allow more tools, or completion delivery. Each packet's `contract.md` is the contract under test, including a `--prompt-file` baseline.
 
 ## Grade
 

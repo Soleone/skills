@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { capturePacket } from "../scripts/capture.mjs";
+import { capturePacket, verifyPacket } from "../scripts/capture.mjs";
 import { prepareReviewCase } from "../eval/prepare.mjs";
 import { REVIEW_CASES } from "../eval/cases.mjs";
 
@@ -17,40 +17,63 @@ async function temporaryDirectory(t) {
 }
 const json = async path => JSON.parse(await readFile(path, "utf8"));
 const read = path => readFile(join(skillRoot, path), "utf8");
-const frontmatter = file => file.split("\n---\n")[0].split("\n");
-const body = file => file.split("\n---\n\n")[1];
 
-test("skill links resolve and both reviewer agents carry the exact review contract", async () => {
+test("the skill is self-contained: links resolve and no reviewer agent has to be installed", async () => {
   const skill = await read("SKILL.md");
   assert.match(skill, /^---\nname: prune\ndescription: .+\ncompatibility: .+\n---/);
   for (const match of skill.matchAll(/\]\(([^)#]+\.md)\)/g)) await stat(join(skillRoot, match[1]));
-  const contract = await read("references/review-contract.md");
-  const pi = await read("agents/prune-reviewer.md");
-  const claude = await read("claude/prune-reviewer.md");
-  assert.equal(body(pi), contract);
-  assert.equal(body(claude), contract);
-  for (const line of [
-    "name: pi-prune-reviewer", "tools: read, grep, find, ls", "extensions:", "subagentOnlyExtensions:", "skills:",
-    "inheritSkills: false", "inheritProjectContext: true", "inheritGlobalContext: false",
-    "systemPromptMode: replace", "defaultContext: fresh", "acceptanceRole: read-only", "allowNestedSubagents: false",
-  ]) assert.ok(frontmatter(pi).includes(line), line);
-  for (const line of ["name: prune-reviewer", "tools: Read, Grep, Glob", "model: inherit"]) assert.ok(frontmatter(claude).includes(line), line);
+  assert.doesNotMatch(skill, /prune-reviewer/);
   const manifest = await json(join(skillRoot, "package.json"));
   assert.equal(manifest.pi.extensions, undefined);
-  for (const path of [...manifest.pi.skills, ...manifest.pi.prompts, ...manifest.pi.subagents.agents]) await stat(join(skillRoot, path));
+  assert.equal(manifest.pi.subagents, undefined);
+  for (const path of [...manifest.pi.skills, ...manifest.pi.prompts]) await stat(join(skillRoot, path));
 });
 
-test("reviewers follow the session's live model and thinking level without fixed defaults", async () => {
+test("reviews run in a fresh subagent on the session's live model and thinking level", async () => {
   const skill = await read("SKILL.md");
-  assert.ok(!frontmatter(await read("agents/prune-reviewer.md")).some(line => /^(model|thinking):/.test(line)));
-  assert.ok(!frontmatter(await read("claude/prune-reviewer.md")).some(line => /^(effort|thinking):/.test(line)));
-  assert.match(skill, /current session's exact model and thinking level/);
+  assert.match(skill, /fresh, with no conversation history and no skills/);
+  assert.match(skill, /the same as this session, unless the user explicitly asks for a reviewer override/);
+  assert.match(skill, /agent: "delegate"/);
+  assert.match(skill, /subagent_type: "general-purpose"/);
+  assert.match(skill, /capture\.mjs --verify <directory>/);
   assert.match(skill, /model: "provider\/id:level"/);
   assert.match(skill, /action:"models"/);
-  assert.match(skill, /explicitly asks for a reviewer override/);
   assert.match(skill, /Never take it from settings files or substitute a fixed `high` or `max`/);
-  assert.match(skill, /unsupported or blocked by policy, report the blocker/);
+  assert.match(skill, /unsupported or blocked by policy, report the error/);
   assert.match(skill, /Don't pass `model` or `effort` unless the user asked for a reviewer override/);
+});
+
+test("every packet carries the contract its reviewer must follow", async t => {
+  const directory = await temporaryDirectory(t);
+  const { cwd } = await prepareReviewCase(REVIEW_CASES[0], join(directory, "fixture"));
+  const packet = await capturePacket({ cwd, storageRoot: join(directory, "captures") });
+  assert.equal(await readFile(packet.contractPath, "utf8"), await read("references/review-contract.md"));
+  assert.equal((await stat(packet.contractPath)).mode & 0o777, 0o600);
+  const task = await readFile(packet.taskPath, "utf8");
+  assert.ok(task.includes(`Your review instructions are in ${JSON.stringify(packet.contractPath)}`));
+  const custom = await capturePacket({ cwd, storageRoot: join(directory, "custom"), contract: "Baseline contract under test.\n" });
+  assert.equal(await readFile(custom.contractPath, "utf8"), "Baseline contract under test.\n");
+});
+
+test("verify proves the repository is unchanged, and names what changed when it is not", async t => {
+  const directory = await temporaryDirectory(t);
+  const { cwd } = await prepareReviewCase(REVIEW_CASES[3], join(directory, "fixture"), false);
+  const packet = await capturePacket({ cwd, storageRoot: join(directory, "captures") });
+  assert.deepEqual(await verifyPacket(packet.directory), { unchanged: true, message: "The repository is unchanged since capture." });
+
+  await writeFile(join(cwd, "status.ts"), "export const edited = true;\n");
+  const edited = await verifyPacket(packet.directory);
+  assert.equal(edited.unchanged, false);
+  assert.match(edited.message, /captured diff no longer matches/);
+
+  const clean = await prepareReviewCase(REVIEW_CASES[3], join(directory, "clean"));
+  const reference = await capturePacket({ cwd: clean.cwd, reference: "HEAD", storageRoot: join(directory, "reference") });
+  execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+    "commit", "-q", "--allow-empty", "-m", "Later"], { cwd: clean.cwd });
+  assert.match((await verifyPacket(reference.directory)).message, /HEAD moved/);
+
+  const stdout = execFileSync(process.execPath, [join(skillRoot, "scripts/capture.mjs"), "--verify", packet.directory], { encoding: "utf8" });
+  assert.equal(JSON.parse(stdout).unchanged, false);
 });
 
 test("capture packets keep supplied evidence private and list every evidence file for the reviewer", async t => {

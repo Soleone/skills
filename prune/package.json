@@ -1,6 +1,6 @@
 {
   "name": "pi-prune-skill",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Removal-first, intent-aware review skill with portable Git capture",
@@ -8,12 +8,10 @@
   "engines": { "node": ">=22" },
   "pi": {
     "skills": ["./SKILL.md"],
-    "prompts": ["./prompts/prune.md"],
-    "subagents": { "agents": ["./agents"] }
+    "prompts": ["./prompts/prune.md"]
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "sync-agents": "node scripts/sync-agents.mjs",
     "eval": "node eval/run.mjs",
     "eval:prepare": "node eval/prepare.mjs"
   }

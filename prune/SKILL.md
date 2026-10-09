@@ -1,7 +1,7 @@
 ---
 name: prune
 description: Removal-first, intent-aware review of one increment (uncommitted changes, the latest commit, or a reference commit). Use when asked to prune, chisel, or challenge whether new behavior, options, fallbacks, abstractions or tests earn their place. Returns read-only proposals for approval, not fixes, polish or an improvement backlog.
-compatibility: Requires Node 22+ and Git. Independent review needs a read-only reviewer agent (pi with pi-subagents, or Claude Code); other hosts get a disclosed direct review.
+compatibility: Requires Node 22+ and Git. Runs the review in a fresh subagent when the host has subagents (for example pi with pi-subagents, or Claude Code); otherwise it reviews in the same session and says so.
 ---
 
 # Prune
@@ -72,53 +72,43 @@ Create a temporary directory outside the repository (`mktemp -d`) and write `int
 node SKILL_DIR/scripts/capture.mjs --cwd <session cwd> --intent <tmp>/intent.json
 ```
 
-`--cwd` is the repository to review, normally the session's working directory. Add `--workflow <tmp>/workflow.json`, `--reference <commit>` and `--focus "<focus text>"` when they apply. The script prints JSON with `root`, `scope`, `directory`, `taskPath` and `reportPath`. It never changes the repository. If it fails, report its error and stop; don't choose another scope.
+`--cwd` is the repository to review, normally the session's working directory. Add `--workflow <tmp>/workflow.json`, `--reference <commit>` and `--focus "<focus text>"` when they apply. The script prints JSON with `root`, `scope`, `directory`, `taskPath` and `reportPath`. The packet in `directory` is a complete handoff: `task.txt` is the reviewer's task, and `contract.md` is its instructions. Capture never changes the repository. If it fails, report its error and stop; don't choose another scope.
 
-### 3. Run the review
+### 3. Run the review in a fresh subagent
 
-Use the first row that applies:
+Independence comes from a fresh context: the reviewer must not see this conversation. Start exactly one subagent with:
 
-| Situation | Do this |
-| --- | --- |
-| The user asked for a direct review | Direct review |
-| pi, with pi-subagents and the `pi-prune-reviewer` agent | [Launch on pi](#launch-on-pi) |
-| Claude Code, with the `prune-reviewer` agent | [Launch on Claude Code](#launch-on-claude-code) |
-| Anything else | Direct review. If this host can start a fresh-context subagent limited to read and search tools, use it instead: the [review contract](references/review-contract.md) as its instructions, the text of `task.txt` as its task. |
+- **Context:** fresh, with no conversation history and no skills.
+- **Model and thinking level:** the same as this session, unless the user explicitly asks for a reviewer override.
+- **Task:** the full text of `task.txt`. It tells the subagent to read `contract.md` first.
+- **Where the host allows it:** `contract.md` as the subagent's system prompt, and only read and search tools. Otherwise the subagent is read-only by instruction alone, and the check in step 4 catches any edit.
 
-If an independent launch fails or the reviewer is misconfigured, report the error and the packet `directory`, then stop. Don't retry with another agent or launcher, widen its tools, install agents or switch to a direct review unless the user asks.
+Save `launch.json` in the packet directory with the host, model, thinking level and any run ID. If a launch fails or its model and thinking level are unsupported or blocked by policy, report the error and the packet `directory`, then stop. Don't retry another way or downgrade unless the user asks.
 
-**Direct review:** read the [review contract](references/review-contract.md) completely and follow it for the task in `task.txt`. Start the report with `Direct review by the implementing session: not independent, read-only by instruction only.` The contract's "write no files" covers everything except this report: save it to `reportPath`.
+**pi with pi-subagents.** If the `subagent` tool is not loaded, call `subagents_enable`. `subagent({action:"models"})` shows the model as `Current session model: provider/id`. Pi does not show you the thinking level: unless the user has stated it in this session, ask once, "The reviewer will use provider/id. Which thinking level: off, minimal, low, medium, high, xhigh or max?" Never take it from settings files or substitute a fixed `high` or `max`. Then launch the built-in `delegate` agent. The `acceptance` setting stops pi-subagents from appending its own report checklist to the task:
 
-#### Launch on pi
+```js
+subagent({ agent: "delegate", task: "<task.txt>", model: "provider/id:level", context: "fresh",
+  cwd: "<root>", async: true, skill: false, acceptance: { level: "none", reason: "The prune contract defines the report" },
+  output: "<reportPath>", outputMode: "file-only", artifacts: true })
+```
 
-1. If the `subagent` tool is not loaded, call `subagents_enable`.
-2. Call `subagent({action:"list", capabilities:true})`. The `pi-prune-reviewer` row must exist, be allowed to run and have exactly the tools `read, grep, find, ls`. Otherwise treat it as a failed launch. Never substitute another agent.
-3. The reviewer runs on the current session's exact model and thinking level. `subagent({action:"models"})` shows the model as `Current session model: provider/id`. Pi does not show you the thinking level: unless the user has stated it in this session, ask once, "The reviewer will use provider/id. Which thinking level: off, minimal, low, medium, high, xhigh or max?" Never take it from settings files or substitute a fixed `high` or `max`. Use a different pair only when the user explicitly asks for a reviewer override.
-4. Launch with the full text of `task.txt`:
+Tell the user the scope and report path, then end your turn. Completion arrives as a notification, so don't poll or call a wait tool. If a launch's outcome is unclear, check its status before any retry.
 
-   ```js
-   subagent({ agent: "pi-prune-reviewer", task: "<task.txt>", model: "provider/id:level",
-     context: "fresh", cwd: "<root>", async: true, skill: false,
-     output: "<reportPath>", outputMode: "file-only", artifacts: true })
-   ```
+**Claude Code.** Call the Agent tool with `subagent_type: "general-purpose"`, `description: "Prune review"` and the text of `task.txt` as the `prompt`. Don't pass `model` or `effort` unless the user asked for a reviewer override: the subagent inherits the session's model and effort. Write its final response, unchanged, to `reportPath`.
 
-   If the pair is unsupported or blocked by policy, report the blocker; don't downgrade.
-5. Save the run ID and output reference to `launch.json` in the packet directory. Tell the user the scope and report path, then end your turn. Completion arrives as a notification, so don't poll or call a wait tool. If a launch's outcome is unclear, check its status before any retry.
-
-#### Launch on Claude Code
-
-1. Call the Agent tool with `subagent_type: "prune-reviewer"`, `description: "Prune review"` and the full text of `task.txt` as the `prompt`. Don't pass `model` or `effort` unless the user asked for a reviewer override: the agent inherits the session's model and effort.
-2. Write the agent's final response, unchanged, to `reportPath`.
+**No subagents, or the user asked for a direct review.** Review in this session: read `contract.md` completely and follow it for the task in `task.txt`. Start the report with `Direct review by the implementing session: not independent, read-only by instruction only.` The contract's "write no files" covers everything except this report: save it to `reportPath`.
 
 ### 4. Deliver
 
-1. Read the report. If it reviewed a different scope than you captured, say the review failed instead of presenting it.
-2. Reply with the verdict and its reason, each finding as written (label, location, proposed change), any decision the user must make, the report path, and the evidence limits in one line.
-3. Add no findings of your own. Leave out any proposal to add tests, options, abstractions, logging or docs unless it is the smallest fix for a demonstrated defect or a labeled breakthrough, and say how many you left out.
-4. End by saying nothing was changed and asking which findings to apply. Apply only accepted findings, then run the relevant checks before continuing other work.
+1. Run `node SKILL_DIR/scripts/capture.mjs --verify <directory>`. If it reports a change, say so before anything else: files changed during the review, so the report and the repository may disagree.
+2. Read the report. If it reviewed a different scope than you captured, say the review failed instead of presenting it.
+3. Reply with who reviewed (fresh subagent with its model and thinking level, or direct), the verdict and its reason, each finding as written (label, location, proposed change), any decision the user must make, the report path, and the evidence limits in one line.
+4. Add no findings of your own. Leave out any proposal to add tests, options, abstractions, logging or docs unless it is the smallest fix for a demonstrated defect or a labeled breakthrough, and say how many you left out.
+5. End by saying nothing was changed and asking which findings to apply. Apply only accepted findings, then run the relevant checks before continuing other work.
 
 ## More
 
-- [Review contract](references/review-contract.md): the reviewer's complete instructions. Required reading for a direct review.
+- [Review contract](references/review-contract.md): the reviewer's complete instructions. Capture copies it into every packet as `contract.md`.
 - [Evidence](references/evidence.md): `workflow.json`, capture scope and limits, privacy, the `.pi/prune-intent.md` anchor.
 - [Evaluation](eval/README.md): behavioral fixtures and a live runner for judging reviewer quality. Tests prove plumbing, not judgment.
