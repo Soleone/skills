@@ -1,6 +1,6 @@
 ---
 name: prune
-description: Removal-first, intent-aware review of one increment (uncommitted changes, the latest commit, or a reference commit). Use when asked to prune, chisel, or challenge whether new behavior, options, fallbacks, abstractions or tests earn their place. Returns read-only proposals for approval, not fixes, polish or an improvement backlog.
+description: Removal-first, intent-aware review of one increment (uncommitted changes, the latest commit, or a reference commit), or of a module or the whole codebase as it stands. Use when asked to prune, chisel, or challenge whether new behavior, options, fallbacks, abstractions or tests earn their place. Returns read-only proposals for approval, not fixes, polish or an improvement backlog.
 compatibility: Requires Node 22+ and Git. Runs the review in a fresh subagent when the host has subagents (for example pi with pi-subagents, or Claude Code); otherwise it reviews in the same session and says so.
 ---
 
@@ -30,15 +30,19 @@ Prune pushes the other way. It reviews each increment while it is small and asks
 /prune focus on unnecessary fallbacks
 /prune --reference abc123
 /prune --reference abc123 challenge surviving fallbacks
+/prune src/backend/undo.ts
+/prune src/backend focus on duplicated helpers
+/prune the whole codebase
 ```
 
-In pi, `/skill:prune` takes the same arguments. An optional leading `--reference <commit>` selects a commit; `--reference` without a commit is an error, so stop and show the usage. The remaining text is the focus. It sets priorities; it never narrows the Git scope, widens the review or authorizes edits.
+In pi, `/skill:prune` takes the same arguments. An optional leading `--reference <commit>` selects a commit; `--reference` without a commit is an error, so stop and show the usage. If the first remaining argument is an existing file or directory, or the user asks for the whole codebase or repository (`.`), it is a module review of that path. The remaining text is the focus. It sets priorities; it never narrows the Git scope, widens the review or authorizes edits.
 
 What gets reviewed:
 
 - **Uncommitted changes exist:** all of them (staged, unstaged and untracked), not only yours.
 - **Clean tree:** the latest commit. Older unreviewed commits need `--reference`, one commit per review, newest first.
 - **`--reference <commit>`:** today's code that survives from that commit. Superseded parts are skipped, never restored.
+- **A path (module review):** every file under it as it stands, not a diff, so bloat that slipped in one justified increment at a time can be caught. Lockfiles and files marked `linguist-vendored` or `linguist-generated` in `.gitattributes` are skipped. A whole codebase is triaged: the reviewer judges dead code, duplicated names and the largest files in depth, and names up to three paths worth their own `/prune`.
 
 ## Procedure
 
@@ -74,9 +78,9 @@ node SKILL_DIR/scripts/capture.mjs --cwd <repository> --intent - <<'JSON'
 JSON
 ```
 
-`--cwd` is the repository to review, normally the session's working directory. Add `--reference <commit>`, `--focus "<focus text>"` and `--workflow <file>` when they apply. The script prints JSON with `root`, `scope`, `directory`, `taskPath`, `reportPath` and `stats` (lines added by kind, declarations added). It also writes `inventory.json`: what the patch adds file by file, plus unused code that knip reports in the changed files when the repository has knip installed. The packet in `directory` is a complete handoff: `task.txt` is the reviewer's task, and `contract.md` is its instructions. Capture never changes the repository. If it fails, report its error and stop; don't choose another scope.
+`--cwd` is the repository to review, normally the session's working directory. Add `--reference <commit>` or `--path <path>` (repeatable; `.` for the whole codebase), `--focus "<focus text>"` and `--workflow <file>` when they apply. The script prints JSON with `root`, `scope`, `directory`, `taskPath`, `reportPath` and `stats` (lines added by kind, declarations added). It also writes `inventory.json`: what the patch adds file by file, plus unused code that knip reports in the changed files when the repository has knip installed. The packet in `directory` is a complete handoff: `task.txt` is the reviewer's task, and `contract.md` is its instructions. Capture never changes the repository. If it fails, report its error and stop; don't choose another scope.
 
-**Size.** Review quality drops as the increment grows: past reviews of 800-line diffs came back KEEP while knip found unused files in them. If `stats.codeAdded + stats.testAdded` is over about 400, say so in one line when you launch, and suggest reviewing it commit by commit with `--reference` next time. Don't block on it.
+**Size.** Review quality drops as the increment grows: past reviews of 800-line diffs came back KEEP while knip found unused files in them. If `stats.codeAdded + stats.testAdded` is over about 400, say so in one line when you launch, and suggest reviewing it commit by commit with `--reference` next time. Don't block on it. This doesn't apply to module reviews, which triage large scopes by design.
 
 ### 3. Run the review in a fresh subagent
 
@@ -107,7 +111,7 @@ Tell the user the scope and report path, then end your turn. Completion arrives 
 
 1. Run `node SKILL_DIR/scripts/capture.mjs --verify <directory>`. If it reports a change, say so before anything else: files changed during the review, so the report and the repository may disagree.
 2. Read the report. If it reviewed a different scope than you captured, say the review failed instead of presenting it.
-3. Reply with who reviewed (fresh subagent with its model and thinking level, or direct), the verdict and its reason, the report's Coverage line, each finding as written (label, location, proposed change), any `More:` line, any decision the user must make, the report path, and the evidence limits in one line. If Coverage is missing or shows unjudged additions, say so: a KEEP that skipped part of the increment is not a clean bill.
+3. Reply with who reviewed (fresh subagent with its model and thinking level, or direct), the verdict and its reason, the report's Coverage line, each finding as written (label, location, proposed change), any `More:` or `Next:` line, any decision the user must make, the report path, and the evidence limits in one line. If Coverage is missing or shows unjudged additions, say so: a KEEP that skipped part of the increment is not a clean bill.
 4. Add no findings of your own. Leave out any proposal to add tests, options, abstractions, logging or docs unless it is the smallest fix for a demonstrated defect or a labeled breakthrough, and say how many you left out.
 5. End by saying nothing was changed and asking which findings to apply. Apply only accepted findings, then run the relevant checks before continuing other work.
 6. Once the user has answered, record it in `decision.json` in the packet directory, so prune's precision can be measured over time: `{ "findings": [{ "number": 1, "label": "SAFE SIMPLIFICATION", "decision": "accepted" | "rejected" | "deferred", "reason": "the user's words, if they gave any" }] }`. For a KEEP, record `{ "findings": [], "note": "..." }` only if the user disputes it, for example by pointing at bloat it missed. Write nothing if the user doesn't answer.

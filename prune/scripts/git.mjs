@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { join, posix } from "node:path";
 import { promisify } from "node:util";
 const exec = promisify(execFile);
 const DIFF_OPTIONS = [
@@ -204,5 +206,70 @@ export async function captureChange(cwd, reference) {
         ...latestCommitUnavailable ? {
             latestCommitUnavailable
         } : {}
+    };
+}
+// Lockfiles and files marked linguist-vendored or linguist-generated are not anyone's code to prune.
+const LOCKFILE = /(^|\/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|bun\.lockb?|Cargo\.lock|poetry\.lock|Gemfile\.lock|go\.sum)$/;
+export async function captureModule(cwd, paths) {
+    const root = (await git(cwd, [
+        "rev-parse",
+        "--show-toplevel"
+    ])).trim();
+    const head = (await git(root, [
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        "HEAD"
+    ], true)).trim() || null;
+    const status = await git(root, [
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all"
+    ]);
+    // Paths are relative to the session's directory, like any shell argument; --full-name makes the output root-relative.
+    const listed = (await git(cwd, [
+        "ls-files",
+        "--full-name",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "-z",
+        "--",
+        ...paths
+    ])).split("\0").filter(Boolean);
+    if (!listed.length) throw new Error(`No files under ${paths.join(", ")}.`);
+    const attributes = (await git(root, [
+        "check-attr",
+        "-z",
+        "linguist-vendored",
+        "linguist-generated",
+        "--",
+        ...listed
+    ])).split("\0");
+    const excluded = new Set();
+    for(let index = 0; index + 2 < attributes.length; index += 3){
+        if (attributes[index + 2] === "set" || attributes[index + 2] === "true") excluded.add(attributes[index]);
+    }
+    const files = [];
+    for (const file of listed){
+        if (excluded.has(file) || LOCKFILE.test(file)) continue;
+        const sample = await readFile(join(root, file)).then((content)=>content.subarray(0, 8000), ()=>null);
+        if (sample && !sample.includes(0)) files.push(file);
+    }
+    const prefix = (await git(cwd, [
+        "rev-parse",
+        "--show-prefix"
+    ])).trim();
+    if (!files.length) throw new Error(`Only vendored, generated, binary or lock files under ${paths.join(", ")}.`);
+    return {
+        root,
+        head,
+        mode: "module",
+        // Root-relative, so --verify resolves them the same way from the root.
+        paths: paths.map((path)=>posix.normalize(prefix + path)),
+        scope: `module review of ${paths.map((path)=>posix.normalize(prefix + path)).join(", ")} as it stands`,
+        status,
+        files,
+        excluded: listed.length - files.length
     };
 }

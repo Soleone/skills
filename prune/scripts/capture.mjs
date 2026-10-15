@@ -3,20 +3,21 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { captureChange } from "./git.mjs";
-import { deadCodeIn, inventoryOf } from "./inventory.mjs";
+import { captureChange, captureModule } from "./git.mjs";
+import { deadCodeIn, inventoryOf, inventoryOfTree } from "./inventory.mjs";
 
-const USAGE = `Usage: node capture.mjs [--cwd PATH] [--intent JSON_PATH|-] [--workflow JSON_PATH|-] [--reference COMMIT] [--focus TEXT] [--output STORAGE_ROOT]
+const USAGE = `Usage: node capture.mjs [--cwd PATH] [--intent JSON_PATH|-] [--workflow JSON_PATH|-] [--reference COMMIT | --path PATH...] [--focus TEXT] [--output STORAGE_ROOT]
        node capture.mjs --verify PACKET_DIRECTORY
-Captures Git evidence into a private review packet, or checks that the repository has not changed since a capture.
+Captures Git evidence into a private review packet (--path: code as it stands, not a diff), or checks that the repository has not changed since a capture.
 A JSON path of - reads standard input. No model calls, session scraping, tests or repository edits.`;
 const CONTRACT = new URL("../references/review-contract.md", import.meta.url);
 const INTENT_NOTE = "Requests selected by the parent session from its available context; compacted or earlier messages may be missing. Select those relevant to the captured change. A referencedProposal only explains what a short reply accepted; it is not a requirement. Attachments are counted, not copied.";
 const WORKFLOW_NOTE = "Operational evidence supplied by the parent session, not authoritative intent. Capture does not inspect session history. No task backend, format or command names are assumed. Activity is historical and may be stale. Plan snapshots show a file's current text, not necessarily the accepted version. A project intent note's filename proves neither authorship nor approval.";
 const WORKING_NOTE = "All changes in this scope are included, not only agent-authored ones. The patch is a snapshot; repository reads see live files. Binary patches are not expanded and no tests were run.";
+const MODULE_NOTE = "No diff: the files under these paths are reviewed as they stand. Lockfiles and files marked linguist-vendored or linguist-generated were left out. Binary files are not expanded and no tests were run.";
 const REFERENCE_NOTE = "The patch is the reference commit's first-parent diff, not today's working diff. Review its surviving implementation in the live current tree; later changes and removals are expected. head and status describe the current checkout. Binary patches are not expanded and no tests were run.";
 
-async function capturePacket({ cwd = process.cwd(), reference, focus = "", intent, workflow,
+async function capturePacket({ cwd = process.cwd(), reference, paths, focus = "", intent, workflow,
   storageRoot = join(process.env.DATA || join(homedir(), "data"), "apps", "pi-prune", "reviews") }) {
   const { note: intentNote, ...evidence } = intent ?? { requests: [], gaps: ["No intent was supplied to capture."] };
   if (!Array.isArray(evidence.requests) || evidence.requests.some(request => typeof request?.text !== "string")) {
@@ -27,7 +28,8 @@ async function capturePacket({ cwd = process.cwd(), reference, focus = "", inten
   for (const field of ["taskContext", "plans", "activity", "warnings"]) {
     if (!Array.isArray(operational[field])) throw new Error(`Workflow JSON must contain an array for ${field}.`);
   }
-  const change = await captureChange(sessionCwd, reference);
+  if (reference && paths?.length) throw new Error("Use --reference or --path, not both.");
+  const change = paths?.length ? await captureModule(sessionCwd, paths) : await captureChange(sessionCwd, reference);
   await addIntentAnchor(change.root, operational);
 
   const storage = resolve(storageRoot);
@@ -36,7 +38,7 @@ async function capturePacket({ cwd = process.cwd(), reference, focus = "", inten
   const path = name => join(directory, name);
   const write = (name, content) => writeFile(path(name), content, { mode: 0o600 });
   const { patch, latestCommit, ...scope } = change;
-  const inventory = { ...inventoryOf(patch), deadCode: await deadCodeIn(change.root, change.files) };
+  const inventory = { ...(change.mode === "module" ? await inventoryOfTree(change.root, change.files) : inventoryOf(patch)), deadCode: await deadCodeIn(change.root, change.files) };
   if (latestCommit) await write("latest-commit.diff", latestCommit.patch);
   const plans = await Promise.all(operational.plans.map(async ({ content, ...plan }, index) => {
     if (content === undefined) return plan;
@@ -51,7 +53,7 @@ async function capturePacket({ cwd = process.cwd(), reference, focus = "", inten
   const packet = {
     root: change.root, scope: change.scope, directory,
     contractPath: path("contract.md"), intentPath: path("intent.json"), scopePath: path("scope.json"), workflowPath: path("workflow.json"),
-    patchPath: path("change.diff"), inventoryPath: path("inventory.json"), taskPath: path("task.txt"), reportPath: path("review.md"),
+    patchPath: patch === undefined ? null : path("change.diff"), inventoryPath: path("inventory.json"), taskPath: path("task.txt"), reportPath: path("review.md"),
     stats: inventory.stats,
   };
   await Promise.all([
@@ -63,9 +65,9 @@ async function capturePacket({ cwd = process.cwd(), reference, focus = "", inten
       ...(latestCommit ? { latestCommit: { head: latestCommit.head, base: latestCommit.base, files: latestCommit.files, patchPath: path("latest-commit.diff") } } : {}),
       capturedAt: new Date().toISOString(),
       focus: focus || null,
-      note: change.referenceCommit ? REFERENCE_NOTE : WORKING_NOTE,
+      note: change.mode === "module" ? MODULE_NOTE : change.referenceCommit ? REFERENCE_NOTE : WORKING_NOTE,
     }, null, 2)),
-    write("change.diff", patch),
+    ...(patch === undefined ? [] : [write("change.diff", patch)]),
     write("inventory.json", JSON.stringify(inventory, null, 2)),
     write("workflow.json", JSON.stringify({ note: [WORKFLOW_NOTE, workflowNote].filter(Boolean).join(" "), ...operational, plans, activity }, null, 2)),
     write("task.txt", reviewTask(packet, latestCommit && path("latest-commit.diff"))),
@@ -76,11 +78,11 @@ async function capturePacket({ cwd = process.cwd(), reference, focus = "", inten
 // A reviewer that is read-only by instruction alone can still edit; this proves after the fact that it didn't.
 async function verifyPacket(directory) {
   const scope = JSON.parse(await readFile(join(directory, "scope.json"), "utf8"));
-  const current = await captureChange(scope.root, scope.referenceCommit);
+  const current = scope.mode === "module" ? await captureModule(scope.root, scope.paths) : await captureChange(scope.root, scope.referenceCommit);
   const changes = [
     ...(current.head === scope.head ? [] : [`HEAD moved from ${scope.head} to ${current.head}`]),
     ...(current.status === scope.status ? [] : [`git status changed from ${JSON.stringify(scope.status)} to ${JSON.stringify(current.status)}`]),
-    ...(scope.referenceCommit || current.patch === await readFile(join(directory, "change.diff"), "utf8") ? [] : ["the captured diff no longer matches the working tree"]),
+    ...(scope.referenceCommit || scope.mode === "module" || current.patch === await readFile(join(directory, "change.diff"), "utf8") ? [] : ["the captured diff no longer matches the working tree"]),
   ];
   return changes.length
     ? { unchanged: false, message: `The repository changed after capture: ${changes.join("; ")}.` }
@@ -105,8 +107,8 @@ function reviewTask(packet, latestCommitPath) {
     `Your review instructions are in ${JSON.stringify(packet.contractPath)}. Unless that text is already your system prompt, read the whole file before anything else and follow it.`,
     "Then read these files completely, paging through large ones:",
     `- Scope, mode and optional focus: ${JSON.stringify(packet.scopePath)}`,
-    `- Captured patch: ${JSON.stringify(packet.patchPath)}`,
-    `- What the patch adds, file by file, and any dead code found in the changed files: ${JSON.stringify(packet.inventoryPath)}`,
+    ...(packet.patchPath ? [`- Captured patch: ${JSON.stringify(packet.patchPath)}`] : []),
+    `- What the ${packet.patchPath ? "patch adds" : "module contains"}, file by file, and any dead code found in the changed files: ${JSON.stringify(packet.inventoryPath)}`,
     ...(latestCommitPath ? [`- Latest-commit alternative, for a bookkeeping-only working diff: ${JSON.stringify(latestCommitPath)}`] : []),
     `- User requests: ${JSON.stringify(packet.intentPath)}`,
     `- Plans, task notes and tool outputs: ${JSON.stringify(packet.workflowPath)}`,
@@ -125,7 +127,7 @@ async function readStdin() {
 
 async function main() {
   const { values } = parseArgs({ options: {
-    cwd: { type: "string" }, reference: { type: "string" }, focus: { type: "string" },
+    cwd: { type: "string" }, reference: { type: "string" }, path: { type: "string", multiple: true }, focus: { type: "string" },
     intent: { type: "string" }, workflow: { type: "string" }, output: { type: "string" },
     verify: { type: "string" }, help: { type: "boolean" },
   } });
@@ -133,7 +135,7 @@ async function main() {
   if (values.verify) { console.log(JSON.stringify(await verifyPacket(resolve(values.verify)), null, 2)); return; }
   const json = async path => path && JSON.parse(path === "-" ? await readStdin() : await readFile(resolve(path), "utf8"));
   const packet = await capturePacket({
-    cwd: values.cwd, reference: values.reference, focus: values.focus,
+    cwd: values.cwd, reference: values.reference, paths: values.path, focus: values.focus,
     intent: await json(values.intent), workflow: await json(values.workflow), storageRoot: values.output,
   });
   console.log(JSON.stringify(packet, null, 2));

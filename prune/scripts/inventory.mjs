@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 const exec = promisify(execFile);
@@ -21,19 +22,44 @@ export function inventoryOf(patch) {
   let file;
   for (const line of patch.split("\n")) {
     if (line.startsWith("diff --git ")) {
-      file = { path: line.split(" b/").at(-1), kind: "other", added: 0, removed: 0, declarations: [] };
-      file.kind = kindOf(file.path);
+      file = { path: line.split(" b/").at(-1), lines: [], removed: 0 };
       files.push(file);
     } else if (!file || line.startsWith("+++ ") || line.startsWith("--- ")) {
       continue;
     } else if (line.startsWith("+")) {
-      file.added++;
-      const match = file.kind !== "docs" && line.slice(1).match(DECLARATION);
-      if (match) file.declarations.push(`${match[1]} ${match[2]}`);
+      file.lines.push(line.slice(1));
     } else if (line.startsWith("-")) {
       file.removed++;
     }
   }
+  return tally(files);
+}
+
+/** The same inventory for code as it stands, for a module review: every line of every file counts. */
+export async function inventoryOfTree(root, paths) {
+  const inventory = tally(await Promise.all(paths.map(async path => ({ path, lines: (await readFile(join(root, path), "utf8")).split("\n"), removed: 0 }))));
+  // Largest first, so a reviewer triaging a whole codebase starts where most code lives.
+  inventory.files.sort((a, b) => b.added - a.added);
+  // The same name declared in several files is the cheapest signal of a copied helper.
+  const declaredIn = new Map();
+  for (const file of inventory.files) {
+    for (const name of new Set(file.declarations.map(declaration => declaration.split(" ")[1]))) {
+      declaredIn.set(name, [...(declaredIn.get(name) ?? []), file.path]);
+    }
+  }
+  inventory.duplicateNames = Object.fromEntries([...declaredIn].filter(([, files]) => files.length > 1));
+  return inventory;
+}
+
+function tally(entries) {
+  const files = entries.map(({ path, lines, removed }) => {
+    const kind = kindOf(path);
+    const declarations = kind === "docs" ? [] : lines.flatMap(line => {
+      const match = line.match(DECLARATION);
+      return match ? [`${match[1]} ${match[2]}`] : [];
+    });
+    return { path, kind, added: lines.length, removed, declarations };
+  });
   const total = kind => files.filter(entry => entry.kind === kind).reduce((sum, entry) => sum + entry.added, 0);
   return {
     stats: {

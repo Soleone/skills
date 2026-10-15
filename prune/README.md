@@ -21,9 +21,11 @@ Prune is the counterweight, run while each increment is still small:
 /prune focus on unnecessary fallbacks
 /prune --reference abc123
 /prune --reference abc123 challenge surviving fallbacks
+/prune src/backend/undo.ts
+/prune the whole codebase
 ```
 
-Implement one increment, run `/prune`, accept the proposals you want, apply and verify, continue. A dirty tree reviews all uncommitted changes; a clean tree reviews the latest commit. For older commits, review one `--reference` at a time, newest first. In pi, the same arguments go after `/skill:prune`.
+Implement one increment, run `/prune`, accept the proposals you want, apply and verify, continue. A dirty tree reviews all uncommitted changes; a clean tree reviews the latest commit. For older commits, review one `--reference` at a time, newest first. Bloat that slips in one justified increment at a time only shows at module level: `/prune <path>` reviews a file or directory as it stands, and a whole codebase gets a triage that names which paths to prune next. Mark vendored or generated code `linguist-vendored` or `linguist-generated` in `.gitattributes` to keep it out. In pi, the same arguments go after `/skill:prune`.
 
 ## Install
 
