@@ -74,7 +74,9 @@ node SKILL_DIR/scripts/capture.mjs --cwd <repository> --intent - <<'JSON'
 JSON
 ```
 
-`--cwd` is the repository to review, normally the session's working directory. Add `--reference <commit>`, `--focus "<focus text>"` and `--workflow <file>` when they apply. The script prints JSON with `root`, `scope`, `directory`, `taskPath` and `reportPath`. The packet in `directory` is a complete handoff: `task.txt` is the reviewer's task, and `contract.md` is its instructions. Capture never changes the repository. If it fails, report its error and stop; don't choose another scope.
+`--cwd` is the repository to review, normally the session's working directory. Add `--reference <commit>`, `--focus "<focus text>"` and `--workflow <file>` when they apply. The script prints JSON with `root`, `scope`, `directory`, `taskPath`, `reportPath` and `stats` (lines added by kind, declarations added). It also writes `inventory.json`: what the patch adds file by file, plus unused code that knip reports in the changed files when the repository has knip installed. The packet in `directory` is a complete handoff: `task.txt` is the reviewer's task, and `contract.md` is its instructions. Capture never changes the repository. If it fails, report its error and stop; don't choose another scope.
+
+**Size.** Review quality drops as the increment grows: past reviews of 800-line diffs came back KEEP while knip found unused files in them. If `stats.codeAdded + stats.testAdded` is over about 400, say so in one line when you launch, and suggest reviewing it commit by commit with `--reference` next time. Don't block on it.
 
 ### 3. Run the review in a fresh subagent
 
@@ -105,9 +107,10 @@ Tell the user the scope and report path, then end your turn. Completion arrives 
 
 1. Run `node SKILL_DIR/scripts/capture.mjs --verify <directory>`. If it reports a change, say so before anything else: files changed during the review, so the report and the repository may disagree.
 2. Read the report. If it reviewed a different scope than you captured, say the review failed instead of presenting it.
-3. Reply with who reviewed (fresh subagent with its model and thinking level, or direct), the verdict and its reason, each finding as written (label, location, proposed change), any decision the user must make, the report path, and the evidence limits in one line.
+3. Reply with who reviewed (fresh subagent with its model and thinking level, or direct), the verdict and its reason, the report's Coverage line, each finding as written (label, location, proposed change), any `More:` line, any decision the user must make, the report path, and the evidence limits in one line. If Coverage is missing or shows unjudged additions, say so: a KEEP that skipped part of the increment is not a clean bill.
 4. Add no findings of your own. Leave out any proposal to add tests, options, abstractions, logging or docs unless it is the smallest fix for a demonstrated defect or a labeled breakthrough, and say how many you left out.
 5. End by saying nothing was changed and asking which findings to apply. Apply only accepted findings, then run the relevant checks before continuing other work.
+6. Once the user has answered, record it in `decision.json` in the packet directory, so prune's precision can be measured over time: `{ "findings": [{ "number": 1, "label": "SAFE SIMPLIFICATION", "decision": "accepted" | "rejected" | "deferred", "reason": "the user's words, if they gave any" }] }`. For a KEEP, record `{ "findings": [], "note": "..." }` only if the user disputes it, for example by pointing at bloat it missed. Write nothing if the user doesn't answer.
 
 ## More
 

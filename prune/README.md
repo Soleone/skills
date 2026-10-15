@@ -40,7 +40,7 @@ In Claude Code, packets live outside your project, so reading them may ask for p
 
 ## How it works
 
-1. The parent pipes the user's relevant requests, verbatim, into `scripts/capture.mjs`, which captures the Git increment into a private packet under `$DATA/apps/pi-prune/reviews/` (default `~/data/apps/pi-prune/reviews/`). It never changes the repository, runs tests or calls a model.
+1. The parent pipes the user's relevant requests, verbatim, into `scripts/capture.mjs`, which captures the Git increment into a private packet under `$DATA/apps/pi-prune/reviews/` (default `~/data/apps/pi-prune/reviews/`). Capture also writes an inventory of what the patch adds (lines by kind, top-level declarations) and, when the repository has knip installed, the unused files and exports in the changed files. It never changes the repository, runs tests or calls a model.
 2. A fresh subagent gets the packet's `task.txt` and follows its copy of the review contract. It returns a verdict (KEEP, PRUNE, REBUILD CANDIDATE or NEEDS INTENT) with at most five findings, each labeled SAFE SIMPLIFICATION, APPROVAL REQUIRED or INVESTIGATE.
 3. `capture.mjs --verify` proves the repository is unchanged, since a general-purpose subagent could edit files.
 4. The parent relays the findings without adding to them and waits for your decision.

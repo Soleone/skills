@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { captureChange } from "./git.mjs";
+import { deadCodeIn, inventoryOf } from "./inventory.mjs";
 
 const USAGE = `Usage: node capture.mjs [--cwd PATH] [--intent JSON_PATH|-] [--workflow JSON_PATH|-] [--reference COMMIT] [--focus TEXT] [--output STORAGE_ROOT]
        node capture.mjs --verify PACKET_DIRECTORY
@@ -35,6 +36,7 @@ async function capturePacket({ cwd = process.cwd(), reference, focus = "", inten
   const path = name => join(directory, name);
   const write = (name, content) => writeFile(path(name), content, { mode: 0o600 });
   const { patch, latestCommit, ...scope } = change;
+  const inventory = { ...inventoryOf(patch), deadCode: await deadCodeIn(change.root, change.files) };
   if (latestCommit) await write("latest-commit.diff", latestCommit.patch);
   const plans = await Promise.all(operational.plans.map(async ({ content, ...plan }, index) => {
     if (content === undefined) return plan;
@@ -49,7 +51,8 @@ async function capturePacket({ cwd = process.cwd(), reference, focus = "", inten
   const packet = {
     root: change.root, scope: change.scope, directory,
     contractPath: path("contract.md"), intentPath: path("intent.json"), scopePath: path("scope.json"), workflowPath: path("workflow.json"),
-    patchPath: path("change.diff"), taskPath: path("task.txt"), reportPath: path("review.md"),
+    patchPath: path("change.diff"), inventoryPath: path("inventory.json"), taskPath: path("task.txt"), reportPath: path("review.md"),
+    stats: inventory.stats,
   };
   await Promise.all([
     // A copy of the contract makes the packet a complete handoff for any reviewer and records which rules it used.
@@ -63,6 +66,7 @@ async function capturePacket({ cwd = process.cwd(), reference, focus = "", inten
       note: change.referenceCommit ? REFERENCE_NOTE : WORKING_NOTE,
     }, null, 2)),
     write("change.diff", patch),
+    write("inventory.json", JSON.stringify(inventory, null, 2)),
     write("workflow.json", JSON.stringify({ note: [WORKFLOW_NOTE, workflowNote].filter(Boolean).join(" "), ...operational, plans, activity }, null, 2)),
     write("task.txt", reviewTask(packet, latestCommit && path("latest-commit.diff"))),
   ]);
@@ -102,6 +106,7 @@ function reviewTask(packet, latestCommitPath) {
     "Then read these files completely, paging through large ones:",
     `- Scope, mode and optional focus: ${JSON.stringify(packet.scopePath)}`,
     `- Captured patch: ${JSON.stringify(packet.patchPath)}`,
+    `- What the patch adds, file by file, and any dead code found in the changed files: ${JSON.stringify(packet.inventoryPath)}`,
     ...(latestCommitPath ? [`- Latest-commit alternative, for a bookkeeping-only working diff: ${JSON.stringify(latestCommitPath)}`] : []),
     `- User requests: ${JSON.stringify(packet.intentPath)}`,
     `- Plans, task notes and tool outputs: ${JSON.stringify(packet.workflowPath)}`,

@@ -8,6 +8,7 @@ Why this review exists: coding agents add more than a change needs. Options nobo
 - Simpler means less for a reader to understand, not fewer lines. Counts of duplicates, nesting, length or dependencies are signals, not rules.
 - Keep required behavior and real safeguards (see Keep). Fewer checks is not automatically better.
 - Propose no additions: no extra tests, options, abstractions, instrumentation, logging, docs or "robustness". "Could be useful" and "more robust" are not reasons, and routine naming, typing or test polish is not a finding. Two exceptions: the smallest fix for a demonstrated violation of required behavior, and an exceptional breakthrough that materially changes the solution (APPROVAL REQUIRED; explain the insight, its benefit and cost, and why it is not polish).
+- Code bloat first. Spend the review on code and tests, where accumulation costs the most. Documentation, plans and other prose get at most one finding, and only when they duplicate or contradict code or the spec.
 - KEEP with no findings is a successful review once you have inspected the implementation and its tests. There is no finding quota and no praise.
 
 ## Limits
@@ -19,7 +20,7 @@ Why this review exists: coding agents add more than a change needs. Options nobo
 
 ## 1. Read
 
-Read every file named in your task completely, paging through large ones. Then read the applicable repository instructions (AGENTS.md, CLAUDE.md), each changed unit, its real callers and contracts, neighboring implementations and its tests. Cite only lines you have read.
+Read every file named in your task completely, paging through large ones. inventory.json lists each changed file with its kind (code, test, docs, other), its added lines and the top-level declarations it adds; deadCode lists what static analysis (knip) reports as unused in the changed files, when the repository has it. The inventory is a reading aid derived from the patch, not a judgment. Then read the applicable repository instructions (AGENTS.md, CLAUDE.md), each changed unit, its real callers and contracts, neighboring implementations and its tests. Cite only lines you have read.
 
 Scope:
 - Normal review: the captured diff is the increment, either all uncommitted changes or, on a clean tree, the latest commit. If the uncommitted diff is only task bookkeeping and scope.json offers latestCommit, that commit may be the real implementation. Decide from the workflow evidence, not from file names, and say which you reviewed. Never dismiss substantive requirement changes.
@@ -46,7 +47,7 @@ Then judge each added part. It is necessary if the goal needs it or it protects 
 
 Do all three.
 
-1. Necessity: what must this increment do? Which features, options, fallback paths, configuration, dependencies or artifacts does it not need? For each, what breaks if it goes?
+1. Necessity: what must this increment do? Which features, options, fallback paths, configuration, dependencies or artifacts does it not need? For each, what breaks if it goes? Use the inventory as your checklist: judge every added declaration in code and test files, not only the first ones that catch your eye, and inside each, the parameters, options and branches it adds. A deadCode entry in the increment is a removal candidate by default: confirm there is no dynamic, script or manual use, then propose deleting it.
 2. Implementation: read the changed units with their real callers and contracts. Where the change owns state or resources, trace the success, failure and cleanup paths. Look for:
    - an abstraction with one implementation: an interface, registry, factory or strategy, or a wrapper that only forwards
    - a copy of something that already exists. Search before proposing reuse and cite both places. Matching syntax alone does not make two policies one.
@@ -94,6 +95,7 @@ Return the report as your final response, in this format. Do not write files.
 **Verdict: PRUNE.** One sentence on why.
 
 Scope: what you reviewed (mode, commit or diff, main files). Goal: the goal you judged against and its source (user request IDs, plan step, or not available).
+Coverage: how many of the inventory's added code and test declarations you judged, out of how many, and which files you did not read fully and why.
 Decision needed: the one user decision, only if there is one.
 
 ### Findings
@@ -111,8 +113,8 @@ Tests were not run. Add only material limits: unread or truncated content, binar
 ```
 
 - Write the report itself, not inside a code block.
-- At most five findings, highest impact first.
-- A KEEP report has only the verdict, Scope and Limits.
+- At most five findings, highest impact first. If more candidates remain, end Findings with one line, `More: N further candidates, mainly <kind>.` When an increment is too large to judge every addition, say so in Limits and name a split, rather than reviewing part of it silently.
+- A KEEP report has only the verdict, Scope (with Coverage) and Limits.
 - No praise, no summary of what is good, no empty sections, checklists, scores or optional improvements. Don't narrate your search.
 - Never claim that tests passed, that anything was verified, or that edits are approved.
 
