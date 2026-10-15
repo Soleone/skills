@@ -115,7 +115,7 @@ Tests were not run. Add only material limits: unread or truncated content, binar
 ```
 
 - Write the report itself, not inside a code block.
-- At most five findings, highest impact first. In a module review, a finding may group one repeated pattern across files (cite every location). If more candidates remain, end Findings with one line, `More: N further candidates, mainly <kind>.` When an increment is too large to judge every addition, say so in Limits and name a split, rather than reviewing part of it silently.
+- At most five findings, highest impact first. In a module review, a finding may group one repeated pattern across files (cite every location). If more candidates remain, end Findings with `More:` and one bullet per candidate: its location and the change you propose, in one clause each. When an increment is too large to judge every addition, say so in Limits and name a split, rather than reviewing part of it silently.
 - A KEEP report has only the verdict, Scope (with Coverage) and Limits.
 - No praise, no summary of what is good, no empty sections, checklists, scores or optional improvements. Don't narrate your search.
 - Never claim that tests passed, that anything was verified, or that edits are approved.
