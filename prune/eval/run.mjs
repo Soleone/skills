@@ -14,9 +14,9 @@ const USAGE = `Usage:
   node eval/run.mjs --prepare [--case 08,13]
   node eval/run.mjs --backend claude --model opus --effort high [--runs 3] [--case 08,13] [--skill-ref REV] [--label NAME]
   node eval/run.mjs --backend pi --model openai-codex/gpt-6-luna:max [...]
-  node eval/run.mjs --grade RUN_DIR      re-grade an earlier run
+  node eval/run.mjs --grade RUN_DIR [--judge-backend pi --judge-model provider/model:thinking]
   node eval/run.mjs --summary RUN_DIR... compare runs
-Only --backend makes model calls. See eval/README.md.`;
+--backend and --grade make model calls. Judging defaults to claude opus. See eval/README.md.`;
 
 const JUDGE = `You grade one code review against a rubric. The review was written by a removal-first reviewer that proposes what to delete or simplify in a code change.
 
@@ -36,9 +36,16 @@ const { values, positionals } = parseArgs({ options: {
   list: { type: "boolean" }, prepare: { type: "boolean" }, help: { type: "boolean" },
   backend: { type: "string" }, model: { type: "string" }, effort: { type: "string" },
   runs: { type: "string", default: "3" }, case: { type: "string" }, "skill-ref": { type: "string" },
-  label: { type: "string" }, "judge-model": { type: "string", default: "opus" }, concurrency: { type: "string", default: "4" },
+  label: { type: "string" }, "judge-backend": { type: "string", default: "claude" }, "judge-model": { type: "string" }, concurrency: { type: "string", default: "4" },
   output: { type: "string" }, grade: { type: "string" }, summary: { type: "boolean" },
 }, allowPositionals: true, strict: true });
+
+values["judge-model"] ??= values["judge-backend"] === "claude" ? "opus" : undefined;
+if (values.backend || values.grade) {
+  if (!["claude", "pi"].includes(values["judge-backend"])) throw new Error("--judge-backend is claude or pi");
+  if (!values["judge-model"]) throw new Error("pi judging needs an explicit --judge-model");
+  if (!Number.isInteger(Number(values.concurrency)) || Number(values.concurrency) < 1) throw new Error("--concurrency must be a positive integer");
+}
 
 const storage = resolve(values.output ?? join(process.env.DATA || join(homedir(), "data"), "apps", "pi-prune", "evaluations"));
 const selected = values.case ? CASES.filter((reviewCase) => values.case.split(",").includes(reviewCase.id)) : CASES;
@@ -68,10 +75,10 @@ async function evaluate() {
   await mkdir(storage, { recursive: true, mode: 0o700 });
   const label = values.label ?? (values.prepare ? "prepare" : `${values.backend}-${values.model}${values.effort ? `-${values.effort}` : ""}${values["skill-ref"] ? `-${values["skill-ref"]}` : ""}`);
   const directory = await mkdtemp(join(storage, `${new Date().toISOString().replaceAll(":", "-")}-${label.replace(/[^\w.-]+/g, "_")}-`));
-  const settings = { backend: values.backend ?? null, model: values.model ?? null, effort: values.effort ?? null, runs, skillRef: values["skill-ref"] ?? "working tree", judgeModel: values["judge-model"], cases: selected.map((reviewCase) => reviewCase.id) };
+  const settings = { backend: values.backend ?? null, model: values.model ?? null, effort: values.effort ?? null, runs, skillRef: values["skill-ref"] ?? "working tree", judgeBackend: values["judge-backend"], judgeModel: values["judge-model"], cases: selected.map((reviewCase) => reviewCase.id) };
   await writeFile(join(directory, "settings.json"), JSON.stringify(settings, null, 2));
   console.log(`Evaluation: ${directory}`);
-  console.log(values.prepare ? "Preparing only; no model calls." : `Model calls: ${runs} run(s) x ${selected.length} case(s) on ${values.backend} ${values.model}, graded by ${values["judge-model"]}.`);
+  console.log(values.prepare ? "Preparing only; no model calls." : `Model calls: ${runs} run(s) x ${selected.length} case(s) on ${values.backend} ${values.model}, graded by ${values["judge-backend"]} ${values["judge-model"]}.`);
 
   const jobs = selected.flatMap((reviewCase) => Array.from({ length: runs }, (_, index) => ({ case: reviewCase, run: index + 1, directory: join(directory, `case-${reviewCase.id}`, `run-${index + 1}`) })));
   await pool(jobs, Number(values.concurrency), async (job) => {
@@ -150,10 +157,12 @@ async function review(job, packet) {
     report = result.result;
     meta = { costUsd: result.total_cost_usd, turns: result.num_turns, models: Object.keys(result.modelUsage ?? {}) };
   } else {
-    const { stdout } = await exec("pi", ["-p", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates",
+    // pi -p waits for stdin to close, and execFile leaves it open.
+    const running = exec("pi", ["-p", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates",
       "--no-context-files", "--no-mcp", "--no-themes", "--tools", "read,grep,find,ls", "--model", values.model,
       "--system-prompt", contract, task], { cwd: packet.root, timeout: 15 * 60_000, maxBuffer: 64 * 1024 * 1024 });
-    report = stdout.trim();
+    running.child.stdin.end();
+    report = (await running).stdout.trim();
   }
   if (!report?.trim()) throw new Error("reviewer returned no report");
   await writeFile(packet.reportPath, report);
@@ -173,18 +182,39 @@ async function grade(job) {
     `## Rubric\nCatch:\n${job.case.rubric.catch.map((item, index) => `${index + 1}. ${item}`).join("\n")}\nAvoid:\n${job.case.rubric.avoid.map((item) => `- ${item}`).join("\n")}`,
     `## Review\n${reviewText}`,
   ].join("\n\n");
-  const { stdout } = await exec("claude", ["-p", prompt, "--system-prompt", JUDGE, "--tools", "", "--model", values["judge-model"],
-    "--output-format", "json", "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config"],
-  { timeout: 5 * 60_000, maxBuffer: 16 * 1024 * 1024 });
-  const result = JSON.parse(stdout);
-  const judged = JSON.parse(result.result.replace(/^```(?:json)?\s*|\s*```$/g, ""));
+  let answer, judgeCostUsd;
+  if (values["judge-backend"] === "pi") {
+    const running = exec("pi", ["-p", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates",
+      "--no-context-files", "--no-mcp", "--no-themes", "--no-tools", "--model", values["judge-model"],
+      "--system-prompt", JUDGE, prompt], { cwd: SKILL_DIR, timeout: 5 * 60_000, maxBuffer: 16 * 1024 * 1024 });
+    running.child.stdin.end();
+    answer = (await running).stdout;
+  } else {
+    const running = exec("claude", ["-p", prompt, "--system-prompt", JUDGE, "--tools", "", "--model", values["judge-model"],
+      "--output-format", "json", "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config"],
+    { timeout: 5 * 60_000, maxBuffer: 16 * 1024 * 1024 });
+    running.child.stdin.end();
+    const result = JSON.parse((await running).stdout);
+    if (result.is_error) throw new Error(`judge failed: ${result.result ?? result.terminal_reason}`);
+    answer = result.result;
+    judgeCostUsd = result.total_cost_usd;
+  }
+  const judged = JSON.parse(answer.trim().replace(/^```(?:json)?\s*|\s*```$/g, ""));
   const score = { caught: 1, partial: 0.5, missed: 0 };
+  if (!Array.isArray(judged.catches) || judged.catches.length !== job.case.rubric.catch.length
+    || judged.catches.some((item) => !Object.hasOwn(score, item?.result))
+    || !Array.isArray(judged.falsePositives) || typeof judged.coverageLine !== "boolean"
+    || !["KEEP", "PRUNE", "REBUILD CANDIDATE", "NEEDS INTENT", "OTHER"].includes(judged.verdict)) {
+    throw new Error(`Invalid judge response for case ${job.case.id}: ${answer}`);
+  }
   const graded = {
     ...judged,
     caught: judged.catches.reduce((sum, item) => sum + (score[item.result] ?? 0), 0),
     total: job.case.rubric.catch.length,
     falsePositiveCount: judged.falsePositives.length,
-    judgeCostUsd: result.total_cost_usd,
+    judgeBackend: values["judge-backend"],
+    judgeModel: values["judge-model"],
+    judgeCostUsd,
   };
   await writeFile(join(job.directory, "grade.json"), JSON.stringify(graded, null, 2));
 }
@@ -205,11 +235,13 @@ async function reviewsIn(directory) {
 async function summarize(directory) {
   const settings = JSON.parse(await readFile(join(directory, "settings.json"), "utf8"));
   const rows = [];
+  const judges = new Set();
   let recall = 0, possible = 0, falsePositives = 0, reviews = 0, cost = 0, seconds = 0;
   for (const job of (await reviewsIn(directory)).sort((a, b) => a.case.id.localeCompare(b.case.id) || a.run - b.run)) {
     const graded = JSON.parse(await readFile(join(job.directory, "grade.json"), "utf8").catch(() => "null"));
     const reviewed = JSON.parse(await readFile(join(job.directory, "review.json"), "utf8").catch(() => "{}"));
     if (!graded) continue;
+    judges.add(`${graded.judgeBackend ?? settings.judgeBackend ?? "claude"} ${graded.judgeModel ?? settings.judgeModel}`);
     let row = rows.find((candidate) => candidate.id === job.case.id);
     if (!row) rows.push(row = { id: job.case.id, title: job.case.title ?? "", caught: [], falsePositives: [], verdicts: [], total: graded.total });
     row.caught.push(graded.caught);
@@ -220,6 +252,8 @@ async function summarize(directory) {
   }
   const lines = [
     `# ${settings.backend} ${settings.model}${settings.effort ? ` (${settings.effort})` : ""}, skill ${settings.skillRef}`,
+    "",
+    `Graded ${reviews}/${settings.cases.length * settings.runs} reviews. Judges: ${[...judges].join(", ") || "none"}.`,
     "",
     "| Case | Caught per run | False positives per run | Verdicts |",
     "|---|---|---|---|",
