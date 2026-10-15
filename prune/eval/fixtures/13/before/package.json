@@ -1,0 +1,6 @@
+{
+  "name": "marks",
+  "type": "module",
+  "bin": { "marks": "src/cli.ts" },
+  "scripts": { "test": "node --test" }
+}
