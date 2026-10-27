@@ -25,7 +25,7 @@ The skill owns policy. There is no separate prompt alias to keep synchronized.
 ## Dependencies
 
 - Required for component implementation: the official `shadcn` skill and browser inspection capability.
-- Conditional: `shadcn-theming` for preset/theme changes; `clean-code` for implementation discipline when available.
+- Conditional: `shadcn-theming` for preset/theme changes; `lean` for implementation discipline when available.
 - Preferred feedback: `pi-annotate`. Missing browser integration is reported; screenshot/text feedback remains usable.
 - Optional: Impeccable for requested specialist critique/audit. It is not required and its guidance does not authorize changing the approved design.
 - Creative-production is only for requested media assets.

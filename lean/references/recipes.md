@@ -103,7 +103,7 @@ Trigger: a misleading name stands in the way of a restructure.
 
 ## Delete dead code
 
-Trigger: unreferenced exports, commented-out blocks, paths disabled "temporarily".
+Trigger: unreferenced exports, commented-out blocks, paths disabled "temporarily", in code your change touches or when asked.
 
 1. Grep for references, including strings and config files.
 2. Delete. Do not comment out. Git remembers.

@@ -31,7 +31,7 @@ Within the host's instruction hierarchy, honor: explicit user requirements → a
 
 - **shadcn:** required before component work. Follow its project inspection and current component-documentation workflow; never guess APIs. If unavailable, finish the brief and report the prerequisite, not improvised components.
 - **shadcn-theming:** use for preset setup or theme/style changes. Review worktree state and preserve unrelated changes. A preset update is not a primitive-base migration.
-- **clean-code:** use during implementation if available; do not abstract from one example.
+- **lean:** use during implementation if available; do not abstract from one example.
 - **Browser tooling:** load the applicable browser/platform guidance for inspection, including WSL guidance in WSL. If inspection is unavailable, report an unverified preview, not a completed visual check.
 - **pi-annotate:** preferred feedback path; use on the user's annotation request. Verify connectivity before promising it works. If unavailable, accept screenshot/text feedback and disclose the limitation; do not install a replacement automatically.
 - **Impeccable:** optional critique/audit specialist, not a prerequisite. Do not load by default solely for this workflow. If the host requires it or the user requests it, follow its setup, choose task-oriented Operate guidance, and supply the approved constraints. Do not fork it or bypass its documented setup via direct playbook shortcuts.
